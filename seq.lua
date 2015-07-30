@@ -9,8 +9,8 @@ require 'nn'
 require 'nngraph'
 require 'cutorch'
 require 'cunn'
-require 'EncoderCriterion'
-require 'DecoderCriterion'
+require 'EncCriterion'
+require 'DecCriterion'
 require 'base'
 require 'dataLoader'
 
@@ -73,12 +73,12 @@ local function create_network(criterion,lookup,vocab_size)
 end
 
 local function setupEncoder()
-   encoder = create_network(EncoderCriterion,data.enc_lookup,data.enc_vocab_size)
+   encoder = create_network(EncCriterion,enc_data.lookup,enc_data.vocab_size)
    params.encoderx, params.encoderdx = encoder:getParameters()
-   model.encoder = g_cloneManyTimes(encoder, data.enc_len_max)
+   model.encoder = g_cloneManyTimes(encoder, enc_data.len_max)
    model.enc_s = {}
    model.enc_ds = {}
-   for j = 0, data.enc_len_max do
+   for j = 0, enc_data.len_max do
       model.enc_s[j] = {}
       for d = 1, 2 * opts.layers do
          local outputStates = torch.zeros(opts.batch_size,opts.rnn_size)
@@ -89,17 +89,17 @@ local function setupEncoder()
       local deltas = torch.zeros(opts.batch_size,opts.rnn_size)
       model.enc_ds[d] = transfer_data(deltas)
    end
-   model.dec_norm_dw = 0
-   model.dec_err = transfer_data(torch.zeros(data.dec_len_max))
+   model.enc_norm_dw = 0
+   model.enc_err = transfer_data(torch.zeros(enc_data.len_max))
 end
 
 local function setupDecoder()
-   decoder = create_network(DecoderCriterion,data.dec_lookup,data.dec_vocab_size)
+   decoder = create_network(DecCriterion,dec_data.lookup,dec_data.vocab_size)
    params.decoderx, params.decoderdx = decoder:getParameters()
-   model.decoder = g_cloneManyTimes(decoder, data.dec_len_max)
+   model.decoder = g_cloneManyTimes(decoder, dec_data.len_max)
    model.dec_s = {}
    model.dec_ds = {}
-   for j = 0, data.dec_len_max do
+   for j = 0, dec_data.len_max do
       model.dec_s[j] = {}
       for d = 1, 2 * opts.layers do
          local outputStates = torch.zeros(opts.batch_size,opts.rnn_size)
@@ -111,17 +111,17 @@ local function setupDecoder()
       model.dec_ds[d] = transfer_data(deltas)
    end
    model.dec_norm_dw = 0
-   model.dec_err = transfer_data(torch.zeros(data.dec_len_max))
+   model.dec_err = transfer_data(torch.zeros(dec_data.len_max))
 end
 
 local function reset_s()
-   for j = 0, data.enc_len_max do
+   for j = 0, enc_data.len_max do
       for d = 1, 2 * opts.layers do
          model.enc_s[j][d]:zero()
       end
    end
 
-   for j = 0, data.dec_len_max do
+   for j = 0, dec_data.len_max do
       for d = 1, 2 * opts.layers do
          model.dec_s[j][d]:zero()
       end
@@ -214,13 +214,16 @@ local function run()
 
    if paths.dir(opts.run_dir) == nil then
       paths.mkdir(opts.run_dir)
+      paths.mkdir(opts.run_dir .. '/data/')
+      paths.mkdir(opts.run_dir .. '/model/')
+      paths.mkdir(opts.run_dir .. '/log/')
    end
 
    print("Saving Options")
    torch.save(paths.concat(opts.run_dir,'opts.th7'),opts)
 
    print("Loading Data")
-   data = dataLoader.load()
+   enc_data, dec_data = dataLoader.load()
 
    print("Creating network")
    setupEncoder()
@@ -238,8 +241,8 @@ local function run()
       end
       
       local iteration = 0
-      local enc_f = io.open(data.encoder_data_file,'r')
-      local dec_f = io.open(data.decoder_data_file,'r')
+      local enc_f = io.open(enc_data.file_path,'r')
+      local dec_f = io.open(dec_data.file_path,'r')
       while true do
          iteration += 1
          collectgarbage()
@@ -260,6 +263,7 @@ local function run()
          local curr_batch_size = num_lines
          local enc_x = {}
          local enc_y = {}
+         batch = {}
          for i=1,opts.enc_len_max do
             table.insert(enc_x,torch.zeros(curr_batch_size))
             table.insert(enc_y,torch.zeros(curr_batch_size))
@@ -277,7 +281,7 @@ local function run()
             local num_word = 1
             for enc_word in stringx.split(enc_line[i],' ') do
                if enc_word ~= "" then
-                  enc_x[num_line][num_word] = data.enc_index[enc_word]
+                  enc_x[num_line][num_word] = enc_data.index[enc_word]
                   num_word += 1
                end
             end
@@ -286,13 +290,13 @@ local function run()
                enc_len_seq = num_word
             end
             
-            dec_x[num_line][1] = data.enc_index[enc_word]
+            dec_x[num_line][1] = enc_data.index[enc_word]
 
             local num_word = 1
             for dec_word in stringx.split(dec_line[i],' ') do
-               dec_y[num_line][num_word] = data.dec_index[enc_word]
+               dec_y[num_line][num_word] = dec_data.index[enc_word]
                if num_word < opts.dec_len_max then
-                  dec_x[num_line][num_word+1] = data.dec_index[enc_word]
+                  dec_x[num_line][num_word+1] = dec_data.index[enc_word]
                end
                num_word += 1
             end
@@ -304,8 +308,8 @@ local function run()
             end
          end
 
-         opts.enc_len_seq = enc_len_seq
-         opts.dec_len_seq = dec_len_seq
+         batch.enc_len_seq = enc_len_seq
+         batch.dec_len_seq = dec_len_seq
 
          fp(enc_x,enc_y,dec_x,dec_y)
          bp(enc_x,enc_y,dec_x,dec_y)
