@@ -210,6 +210,8 @@ local function run()
    cmd:option('-weight_init',.08)
    cmd:option('-lr',0.7)
    cmd:option('-run_dir','./exp/')
+   cmd:option('-save_dir','./exp/model/')
+   cmd:option('-load_model',false)
    opts = cmd:parse(arg)
 
    if paths.dir(opts.run_dir) == nil then
@@ -228,13 +230,24 @@ local function run()
    print("Creating network")
    setupEncoder()
    setupDecoder()
+   local start = 1
+
+   if opts.load_model then
+      oldModel = torch.load(opts.save_dir .. '/model.th7')
+      g_replace_table(params.encoderx,oldModel[1].encoderx)
+      g_replace_table(params.encoderdx,oldModel[1].encoderdx)
+      g_replace_table(params.decoderx,oldModel[1].decoderx)
+      g_replace_table(params.decoderdx,oldModel[1].decoderdx)
+      start = oldModel[2]
+      opts.lr = oldModel[3]
+   end
 
    local beginning_time = torch.tic()
    local start_time = torch.tic()
    
    print("Starting training")
    
-   for epoch=1,opts.epochs do
+   for epoch=start,opts.epochs do
       print('Epoch ' .. epoch)
       if epoch > opts.anneal_epoch then
          opts.lr = opts.lr / opts.decay
@@ -333,6 +346,7 @@ local function run()
       end
       enc_f:close()
       dec_f:close()
+      torch.save(opts.save_dir + '/model.th7', {params, epochs, opts.lr})
    end         
 end
 
