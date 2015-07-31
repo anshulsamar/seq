@@ -142,9 +142,7 @@ local function fp(enc_x, enc_y, dec_x, dec_y)
    local ret
    for i = 1, batch.enc_len_seq do
       local s = model.enc_s[i - 1]
-      print(enc_x[i]:size(1))
-      print(enc_y[i]:size(1))
-      print(s:size(1))
+      print(s[1]:size())
       ret = model.encoder[i]:forward({enc_x[i], enc_y[i], s})
       model.enc_error[i] = ret[1]
       model.enc_s[i] = ret[2]
@@ -200,6 +198,8 @@ local function bp(enc_x,enc_y,dec_x,dec_y)
    params.decoderx:add(params.decoderdx:mul(-opts.lr))
 end
 
+-- CHANGE BATCH SIZE? BUG?
+
 function run()
    print("\27[31mStaring Experiment\n---------------")
    g_init_gpu({1})
@@ -207,7 +207,7 @@ function run()
    cmd:option('-layers',2)
    cmd:option('-in_size',300)
    cmd:option('-rnn_size',300)
-   cmd:option('-batch_size',128)
+   cmd:option('-batch_size',2)
    cmd:option('-max_grad_norm',5)
    cmd:option('-epochs',7)
    cmd:option('-anneal_after',5)
@@ -300,6 +300,7 @@ function run()
 
          for i=1,num_lines do
             if enc_line[i] ~= nil then
+               print(enc_line[i])
                local num_word = 1
                local last_word = ""
                for _,enc_word in ipairs(stringx.split(enc_line[i],' ')) do
@@ -321,16 +322,14 @@ function run()
                for _,dec_word in ipairs(stringx.split(dec_line[i],' ')) do
                   if dec_word ~= "" and num_word <= dec_data.len_max then
                      dec_y[num_word][i] = dec_data.index[dec_word]
-                     indexes[num_word] = dec_data.index[dec_word]
+                     indexes[num_word] = {dec_data.index[dec_word],dec_word}
                      num_word = num_word + 1
                   end
                end
 
                for j=1,#indexes - 1 do
-                  dec_x[j+1][i] = indexes[j]
+                  dec_x[j+1][i] = indexes[j][1]
                end
-
-               table.remove(dec_x)
 
                if num_word > dec_len_seq then
                   dec_len_seq = num_word
