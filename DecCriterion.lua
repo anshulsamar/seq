@@ -8,7 +8,7 @@ end
 
 
 function DecCriterion:__len()
-   return parent.__len()
+   return parent.__len(self)
 end
 
 
@@ -17,7 +17,7 @@ function DecCriterion:updateOutput(input, target)
       self.output:zero()
       return self.output
    else
-      return parent.updateOutput(input,target)
+      return parent.updateOutput(self,input,target)
    end
 end
 
@@ -27,6 +27,6 @@ function DecCriterion:updateGradInput(input, target)
       self.gradInput:zero()
       return self.gradInput
    else
-      return parent.updateGradInput(input, target)
+      return parent.updateGradInput(self,input, target)
    end
 end

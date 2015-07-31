@@ -7,7 +7,7 @@ function EncCriterion:__init(weights)
 end
 
 function EncCriterion:updateOutput(input, target)
-   self.output:zero()
+   self.output = 0
    return self.output
 end
 
