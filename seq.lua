@@ -51,11 +51,11 @@ local function lstm(x, prev_c, prev_h)
    return next_c, next_h
 end
 
-local function create_network(criterion,lookup,vocab_size)
+local function create_network(criterion,lookup,lookup_size,vocab_size)
    local x = nn.Identity()()
    local y = nn.Identity()()
    local prev_s = nn.Identity()()
-   LookupTable = nn.LookupTable(vocab_size,opts.in_size)
+   LookupTable = nn.LookupTable(lookup_size,opts.in_size)
    g_replace_table({LookupTable:parameters()[1]},{lookup})
    local i = {[0] = LookupTable(x)}
    local next_s = {}
@@ -71,14 +71,14 @@ local function create_network(criterion,lookup,vocab_size)
    end
    local h2y = nn.Linear(opts.rnn_size, vocab_size)
    local pred = nn.LogSoftMax()(h2y(i[opts.layers]))
-   local err = nn.ClassNLLCriterion()({pred, y})
+   local err = criterion()({pred, y})
    local module = nn.gModule({x, y, prev_s},{err, nn.Identity()(next_s)})
    module:getParameters():uniform(-opts.weight_init, opts.weight_init)
    return transfer_data(module)
 end
 
 local function setupEncoder()
-   encoder = create_network(EncCriterion,enc_data.lookup,enc_data.vocab_size)
+   encoder = create_network(EncCriterion,enc_data.lookup,enc_data.lookup_size,enc_data.vocab_size)
    params.encoderx, params.encoderdx = encoder:getParameters()
    model.encoder = g_cloneManyTimes(encoder, enc_data.len_max)
    model.enc_s = {}
@@ -99,7 +99,7 @@ local function setupEncoder()
 end
 
 local function setupDecoder()
-   decoder = create_network(DecCriterion,dec_data.lookup,dec_data.vocab_size)
+   decoder = create_network(DecCriterion,dec_data.lookup,dec_data.lookup_size,dec_data.vocab_size)
    params.decoderx, params.decoderdx = decoder:getParameters()
    model.decoder = g_cloneManyTimes(decoder, dec_data.len_max)
    model.dec_s = {}
@@ -140,7 +140,7 @@ local function reset_ds()
    end
 end
 
-local function fp(enc_x, enc_y, dec_x, dec_y)
+local function fp(enc_x, enc_y, dec_x, dec_y, batch)
    reset_s()
    local ret
    for i = 1, batch.enc_len_seq do
@@ -149,6 +149,11 @@ local function fp(enc_x, enc_y, dec_x, dec_y)
       model.enc_err[i] = ret[1]
       model.enc_s[i] = ret[2]
    end
+
+   --for i = 1, batch.curr_batch_size do
+   --model.dec_s[0][i] = model.enc_s[batch.enc_lengths[i]][i]
+   --end
+
    model.dec_s[0] = model.enc_s[batch.enc_len_seq]
    for i = 1, batch.dec_len_seq do
       local s = model.dec_s[i - 1]
@@ -158,7 +163,7 @@ local function fp(enc_x, enc_y, dec_x, dec_y)
    end
 end
 
-local function bp(enc_x,enc_y,dec_x,dec_y)
+local function bp(enc_x,enc_y,dec_x,dec_y, batch)
    params.encoderdx:zero()
    params.decoderdx:zero()
    reset_ds()
@@ -175,12 +180,14 @@ local function bp(enc_x,enc_y,dec_x,dec_y)
 
    g_replace_table(model.enc_ds,model.dec_ds)
 
-   for i = batch.enc_seq_len, 1, -1 do
-      local s = model.enc_s[i-1]
+   for i = 0, batch.enc_len_seq-1 do
+      local new_i = batch.enc_len_seq - i
+      local s = model.enc_s[new_i-1]
       local derr = transfer_data(torch.ones(1))
-      local input = {enc_x[i], enc_y[i], s}
+      local input = {enc_x[new_i], enc_y[new_i], s}
       local output = {derr, model.enc_ds}
-      local tmp = model.encoder[i]:backward(input, output)[3]
+      local b = model.encoder[new_i]:backward(input, output)
+      local tmp = b[3]
       g_replace_table(model.enc_ds, tmp)
       cutorch.synchronize()
    end
@@ -200,10 +207,18 @@ local function bp(enc_x,enc_y,dec_x,dec_y)
    params.decoderx:add(params.decoderdx:mul(-opts.lr))
 end
 
+
+-- group things together that are same size
 -- CHANGE BATCH SIZE? BUG?
 -- CHANGE CRITERION BACK TO ENC/DEC
 -- ENC CRITERION RETURNS 0 instead of vector - bug?
 -- check what happens if batch size is less or more or less examples than batch_size
+-- currently default for decy ency is 1
+-- currently made default for 0 vector input
+-- how to do mini batch with sequence (Because even the 0 input vector gets propogated due to hidden state) 
+-- make mini batches similar size
+-- print out model.enc_norm stuff using gf3 and since begginning
+-- print out errors too
 
 function run()
    print("\27[31mStaring Experiment\n---------------")
@@ -271,14 +286,13 @@ function run()
       local dec_f = io.open(dec_data.file_path,'r')
       while true do
          iteration = iteration + 1
-         collectgarbage()
          local num_lines = 0
          local enc_line = {}
          local dec_line = {}
          while true do
             table.insert(enc_line,enc_f:read("*l"))
             table.insert(dec_line,dec_f:read("*l"))
-            if enc_line == nil or dec_line == nil then
+            if enc_line[#enc_line] == nil or dec_line[#dec_line] == nil then
                break
             end
             num_lines = num_lines + 1
@@ -287,17 +301,25 @@ function run()
             end
          end
          local curr_batch_size = num_lines
+
+         if curr_batch_size == 0 then break end
+
          local enc_x = {}
          local enc_y = {}
-         batch = {}
+         local batch = {}
+         batch.curr_batch_size = curr_batch_size
+         batch.enc_lengths = torch.zeros(curr_batch_size)
+         batch.dec_lengths = torch.zeros(curr_batch_size)
          for i=1,enc_data.len_max do
-            table.insert(enc_x,transfer_data(torch.zeros(curr_batch_size)))
+            local x_init = torch.ones(curr_batch_size) * enc_data.default_index
+            table.insert(enc_x,transfer_data(x_init))
             table.insert(enc_y,transfer_data(torch.zeros(curr_batch_size)))
          end
          local dec_x = {}
          local dec_y = {}
          for i=1,dec_data.len_max do
-            table.insert(dec_x,transfer_data(torch.zeros(curr_batch_size)))
+            local x_init = torch.ones(curr_batch_size) * dec_data.default_index
+            table.insert(dec_x,transfer_data(x_init))
             table.insert(dec_y,transfer_data(torch.zeros(curr_batch_size)))
          end
          local enc_len_seq = 0
@@ -305,12 +327,19 @@ function run()
 
          for i=1,num_lines do
             if enc_line[i] ~= nil then
-               local num_word = 1
+               local num_word = 0
                local last_word = ""
+               local len = 0
                for _,enc_word in ipairs(stringx.split(enc_line[i],' ')) do
-                  if enc_word ~= "" and num_word <= enc_data.len_max then
-                     enc_x[num_word][i] = enc_data.index[enc_word]
+                  if enc_word ~= "" and len < enc_data.len_max  then
+                     len = len + 1
+                  end
+               end
+               local offset = enc_data.len_max - len
+               for _,enc_word in ipairs(stringx.split(enc_line[i],' ')) do
+                  if enc_word ~= "" and num_word < enc_data.len_max  then
                      num_word = num_word + 1
+                     enc_x[num_word + offset][i] = enc_data.index[enc_word]
                      last_word = enc_word
                   end
                end
@@ -318,16 +347,18 @@ function run()
                if num_word > enc_len_seq then
                   enc_len_seq = num_word
                end
+
+               batch.enc_lengths[i] = num_word
                
                dec_x[1][i] = enc_data.index[last_word]
 
-               local num_word = 1
+               local num_word = 0
                local indexes = {}
                for _,dec_word in ipairs(stringx.split(dec_line[i],' ')) do
-                  if dec_word ~= "" and num_word <= dec_data.len_max then
+                  if dec_word ~= "" and num_word < dec_data.len_max then
+                     num_word = num_word + 1
                      dec_y[num_word][i] = dec_data.index[dec_word]
                      indexes[num_word] = {dec_data.index[dec_word],dec_word}
-                     num_word = num_word + 1
                   end
                end
 
@@ -338,6 +369,9 @@ function run()
                if num_word > dec_len_seq then
                   dec_len_seq = num_word
                end
+
+               batch.dec_lengths[i] = num_word
+
             end
          end
 
@@ -345,9 +379,9 @@ function run()
          batch.dec_len_seq = dec_len_seq
 
          print("Forward")
-         fp(enc_x,enc_y,dec_x,dec_y)
+         fp(enc_x,enc_y,dec_x,dec_y,batch)
          print("Backward")
-         bp(enc_x,enc_y,dec_x,dec_y)
+         bp(enc_x,enc_y,dec_x,dec_y,batch)
 
          if curr_batch_size ~= opts.batch_size then
             break
@@ -357,18 +391,13 @@ function run()
             cutorch.synchronize()
          end
 
-         print('epoch = ' .. g_f3(epoch) ..
-               'iteration = ' .. g_f3(iteration) ..
-               'meanError = ' .. err ..
-               'encNorm = ' .. g_f3(model.enc_norm_dw) ..
-               'decNorm = ' .. g_f3(model.dec_norm_dw) ..
-               'lr = ' ..  g_f3(params.lr) ..
-               'time = ' .. since_beginning .. ' mins.')
+         print('epoch = ' .. epoch .. 'iteration = ' .. iteration .. 'lr = ' ..  opts.lr)
 
       end
+      print('Finished epoch')
       enc_f:close()
       dec_f:close()
-      torch.save(opts.save_dir + '/model.th7', {params, epochs, opts.lr})
+      torch.save(opts.save_dir .. '/model.th7', {params, epochs, opts.lr})
    end         
 end
 
