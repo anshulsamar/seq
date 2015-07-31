@@ -103,7 +103,10 @@ function M.load(d)
 
    print("Generate Lookup Table")
 
-   d.lookup = torch.Tensor(d.vocab_size,d.dim)
+   d.default_index = d.vocab_size + 1
+   d.lookup_size = d.default_index
+   d.lookup = torch.Tensor(d.lookup_size,d.dim)
+   d.lookup[d.default_index] = torch.zeros(d.dim)
 
    for word,num in pairs(d.index) do
       if (d.word_emb[word] ~= nil) then
@@ -112,6 +115,10 @@ function M.load(d)
          d.lookup[num] = torch.randn(d.dim)
       end
    end
+   
+   -- account for extra 'default' lookup
+
+
 end
 
 function M.get()
