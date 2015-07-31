@@ -13,6 +13,8 @@ require 'EncCriterion'
 require 'DecCriterion'
 require 'base'
 require 'dataLoader'
+require 'reload'
+require 'paths'
 
 local function transfer_data(x)
    return x:cuda()
@@ -51,7 +53,7 @@ local function create_network(criterion,lookup,vocab_size)
    local y = nn.Identity()()
    local prev_s = nn.Identity()()
    LookupTable = nn.LookupTable(vocab_size,opts.in_size)
-   LookupTable:parameters()[1] = lookup
+   g_replace_table({LookupTable:parameters()[1]},{lookup})
    local i = {[0] = LookupTable(x)}
    local next_s = {}
    -- route elements of table to independent nodes
@@ -257,7 +259,7 @@ local function run()
       local enc_f = io.open(enc_data.file_path,'r')
       local dec_f = io.open(dec_data.file_path,'r')
       while true do
-         iteration += 1
+         iteration = iteration + 1
          collectgarbage()
          local num_lines = 0
          local enc_line = {}
@@ -268,7 +270,7 @@ local function run()
             if enc_line == nil or dec_line == nil then
                break
             end
-            num_lines += 1
+            num_lines = num_lines + 1
             if num_lines == opts.batch_size then
                break
             end
@@ -295,7 +297,7 @@ local function run()
             for enc_word in stringx.split(enc_line[i],' ') do
                if enc_word ~= "" then
                   enc_x[num_line][num_word] = enc_data.index[enc_word]
-                  num_word += 1
+                  num_word = num_word + 1
                end
             end
 
@@ -311,7 +313,7 @@ local function run()
                if num_word < opts.dec_len_max then
                   dec_x[num_line][num_word+1] = dec_data.index[enc_word]
                end
-               num_word += 1
+               num_word = num_word + 1
             end
 
             table.remove(dec_x)
