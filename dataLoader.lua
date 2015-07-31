@@ -25,8 +25,8 @@ function M.getWordEmbeddings(path,index)
          end
          word_emb[key] = torch.Tensor(vec)
          count = count + 1
-         print(count)
       end
+      if count == 20 then break end
    end
    return word_emb
 end
@@ -42,7 +42,6 @@ function M.parseDataset(data_path,file_path)
          print("Loading " .. filename)
          local data = io.open(data_path .. filename, 'r')
          for line in data:read('*a'):gmatch('.-[%.%?!]') do
-            print(line)
             local len = 0
             for word in line:lower():gmatch("%a+") do
                f:write(word .. ' ')
@@ -73,20 +72,19 @@ end
 
 function M.load(d)
 
-   print("Note: remove prev files if settings have changed")
-   print("Note: current parser meant for prose")
    print("Parsing and Writing Data")
 
    local f = io.open(d.saved_vocab_path,'r')
-   if f == nil then
+   local g = io.open(d.file_path,'r')
+   if f == nil or g == nil then
       d.index, d.vocab_size, d.len_max = M.parseDataset(d.data_path,d.file_path)
+      print("Saving Vocab")
       torch.save(d.saved_vocab_path,{d.index,d.vocab_size,d.len_max})
    else
       io.close(f)
       d.index, d.vocab_size, d.len_max = unpack(torch.load(d.saved_vocab_path))
    end
 
-   print(d.index)
    print("Vocab Size " .. d.vocab_size)
    print("Len Max " .. d.len_max)
 
@@ -95,17 +93,18 @@ function M.load(d)
    local f = io.open(d.saved_word_path,'r')
    if f == nil then
       d.word_emb = M.getWordEmbeddings(d.raw_word_path,d.index)
-      torch.save(d.saved_word_path,word_emb)
+      print("Saving Embeddings")
+      torch.save(d.saved_word_path,d.word_emb)
    else
-      io.close(f)
+      f:close()
       d.word_emb = torch.load(d.saved_word_path)
    end
-
+   print(d.word_emb)
    print("Generate Lookup Table")
 
-   d.lookup = torch.Tensor(count,dim)
+   d.lookup = torch.Tensor(d.vocab_size,d.dim)
 
-   for word,num in d.index do
+   for word,num in pairs(d.index) do
       if (d.word_emb[word] ~= nil) then
          d.lookup[num] = d.word_emb[word]
       else
@@ -115,6 +114,12 @@ function M.load(d)
 end
 
 function M.get()
+
+   print("\27[31mNote: remove prev files if settings have changed")
+   print("\27[31mNote: current parser meant for prose")
+   print("\27[31mNote: minimum glove vectors used for debugging")
+
+   print("Encoder Data\n----------")
 
    local base_path = '/deep/group/speech/asamar/nlp/seq/'
    local glove_path = '/deep/group/speech/asamar/nlp/glove/pretrained/glove.840B.300d.txt'
@@ -131,9 +136,15 @@ function M.get()
    enc_d.lookup = {}
    enc_d.vocab_size = 0
    enc_d.len_max = 0
-   os.execute("rm " .. enc_d.file_path .. '.shuf')
-   os.execute("rm " .. enc_d.file_path)
+   if paths.filep(enc_d.file_path .. '.shuf') then 
+      os.execute("rm " .. enc_d.file_path .. '.shuf')
+   end
+   if paths.filep(enc_d.file_path) then
+      os.execute("rm " .. enc_d.file_path)
+   end
    M.load(enc_d)
+
+   print("Decoder Data\n----------")
 
    local dec_d = {}
    dec_d.base_path = base_path
@@ -141,15 +152,19 @@ function M.get()
    dec_d.file_path = dec_d.base_path .. '/exp/data/dec.txt'
    dec_d.raw_word_path = glove_path
    dec_d.saved_word_path = dec_d.base_path .. '/exp/data/gloveDec.th7'
-   dec_d.saved_vocab_path = dec_d.base_path .. '/exp/data/gutenberg/vocabDec.th7'
+   dec_d.saved_vocab_path = dec_d.base_path .. '/exp/data/vocabDec.th7'
    dec_d.dim = 300
    dec_d.index = {}
    dec_d.word_emb = {}
    dec_d.lookup = {}
    dec_d.vocab_size = 0
    dec_d.len_max = 0
-   os.execute("rm " .. dec_d.file_path .. '.shuf')
-   os.execute("rm " .. dec_d.file_path)
+   if paths.filep(dec_d.file_path .. '.shuf') then 
+      os.execute("rm " .. dec_d.file_path .. '.shuf')
+   end
+   if paths.filep(dec_d.file_path .. '.shuf') then 
+      os.execute("rm " .. dec_d.file_path)
+   end
    M.load(dec_d)
 
    print("Shuffle Data")
