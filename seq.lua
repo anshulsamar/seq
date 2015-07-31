@@ -38,13 +38,16 @@ local function lstm(x, prev_c, prev_h)
 
    -- LSTM memory cell
    local in_gate = nn.Sigmoid()(nn.SelectTable(1)(sliced_gates))
-   local in_trainsform = nn.Tanh()(nn.SelectTable(2)(sliced_gates))
+   local in_transform = nn.Tanh()(nn.SelectTable(2)(sliced_gates))
    local forget_gate = nn.Sigmoid()(nn.SelectTable(3)(sliced_gates))
    local out_gate = nn.Sigmoid()(nn.SelectTable(4)(sliced_gates))
 
-   local next_c = nn.CAddTable()({nn.CMulTable()({forget_gate, prev_c}),
-                                  nn.CMulTable()({in_gate, in_transform})})
-   local next_h = nn.CMulTable(){out_gate,nn.Tanh()(next_c)}
+   local next_c           = nn.CAddTable()({
+      nn.CMulTable()({forget_gate, prev_c}),
+      nn.CMulTable()({in_gate,     in_transform})
+  })
+   local next_h           = nn.CMulTable()({out_gate, nn.Tanh()(next_c)})
+
    return next_c, next_h
 end
 
@@ -61,14 +64,14 @@ local function create_network(criterion,lookup,vocab_size)
    for layer_idx = 1, opts.layers do
       local prev_c = split[2 * layer_idx - 1]
       local prev_h = split[2 * layer_idx]
-      local next_c, next_h = lstm(x, prev_c, prev_h)
+      local next_c, next_h = lstm(i[layer_idx-1], prev_c, prev_h)
       table.insert(next_s, next_c)
       table.insert(next_s, next_h)
       i[layer_idx] = next_h
    end
    local h2y = nn.Linear(opts.rnn_size, vocab_size)
    local pred = nn.LogSoftMax()(h2y(i[opts.layers]))
-   local err = criterion()({pred, y})
+   local err = nn.ClassNLLCriterion()({pred, y})
    local module = nn.gModule({x, y, prev_s},{err, nn.Identity()(next_s)})
    module:getParameters():uniform(-opts.weight_init, opts.weight_init)
    return transfer_data(module)
@@ -142,16 +145,15 @@ local function fp(enc_x, enc_y, dec_x, dec_y)
    local ret
    for i = 1, batch.enc_len_seq do
       local s = model.enc_s[i - 1]
-      print(s[1]:size())
       ret = model.encoder[i]:forward({enc_x[i], enc_y[i], s})
-      model.enc_error[i] = ret[1]
+      model.enc_err[i] = ret[1]
       model.enc_s[i] = ret[2]
    end
    model.dec_s[0] = model.enc_s[batch.enc_len_seq]
    for i = 1, batch.dec_len_seq do
       local s = model.dec_s[i - 1]
       ret = model.decoder[i]:forward({dec_x[i], dec_y[i], s})
-      model.dec_error[i] = ret[1]
+      model.dec_err[i] = ret[1]
       model.dec_s[i] = ret[2]
    end
 end
@@ -199,6 +201,9 @@ local function bp(enc_x,enc_y,dec_x,dec_y)
 end
 
 -- CHANGE BATCH SIZE? BUG?
+-- CHANGE CRITERION BACK TO ENC/DEC
+-- ENC CRITERION RETURNS 0 instead of vector - bug?
+-- check what happens if batch size is less or more or less examples than batch_size
 
 function run()
    print("\27[31mStaring Experiment\n---------------")
@@ -300,7 +305,6 @@ function run()
 
          for i=1,num_lines do
             if enc_line[i] ~= nil then
-               print(enc_line[i])
                local num_word = 1
                local last_word = ""
                for _,enc_word in ipairs(stringx.split(enc_line[i],' ')) do
@@ -340,7 +344,9 @@ function run()
          batch.enc_len_seq = enc_len_seq
          batch.dec_len_seq = dec_len_seq
 
+         print("Forward")
          fp(enc_x,enc_y,dec_x,dec_y)
+         print("Backward")
          bp(enc_x,enc_y,dec_x,dec_y)
 
          if curr_batch_size ~= opts.batch_size then
