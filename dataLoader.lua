@@ -65,6 +65,7 @@ function M.parseDataset(data_path,file_path)
       vocab_size = vocab_size + 1
       index['<EOS>'] = vocab_size
    end
+   len_max = len_max + 1 --account for EOM
    f:close()
    return index, vocab_size, len_max
 
@@ -99,7 +100,7 @@ function M.load(d)
       f:close()
       d.word_emb = torch.load(d.saved_word_path)
    end
-   print(d.word_emb)
+
    print("Generate Lookup Table")
 
    d.lookup = torch.Tensor(d.vocab_size,d.dim)
@@ -115,11 +116,12 @@ end
 
 function M.get()
 
-   print("\27[31mNote: remove prev files if settings have changed")
-   print("\27[31mNote: current parser meant for prose")
-   print("\27[31mNote: minimum glove vectors used for debugging")
+   print("\27[31mData Notes\n----------")
+   print("Note: remove prev files if settings have changed")
+   print("Note: current parser meant for prose")
+   print("Note: minimum glove vectors used for debugging")
 
-   print("Encoder Data\n----------")
+   print("\27[31mEncoder Data\n-------------")
 
    local base_path = '/deep/group/speech/asamar/nlp/seq/'
    local glove_path = '/deep/group/speech/asamar/nlp/glove/pretrained/glove.840B.300d.txt'
@@ -144,7 +146,7 @@ function M.get()
    end
    M.load(enc_d)
 
-   print("Decoder Data\n----------")
+   print("\27[31mDecoder Data\n-------------")
 
    local dec_d = {}
    dec_d.base_path = base_path
@@ -167,6 +169,8 @@ function M.get()
    end
    M.load(dec_d)
 
+   print("\27[31mPost Processing\n---------------")
+   
    print("Shuffle Data")
 
    os.execute("paste -d \':\' " .. enc_d.file_path .. ' ' .. dec_d.file_path .. " | shuf | awk -v FS=\":\" \'{ print $1 > \"" .. enc_d.file_path .. '.shuf' .. "\" ; print $2 > \"" .. dec_d.file_path .. '.shuf' .. "\" }\'")

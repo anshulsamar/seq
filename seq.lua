@@ -67,7 +67,7 @@ local function create_network(criterion,lookup,vocab_size)
       i[layer_idx] = next_h
    end
    local h2y = nn.Linear(opts.rnn_size, vocab_size)
-   local pred = nn.LogSoftMax()(h2y)
+   local pred = nn.LogSoftMax()(h2y(i[opts.layers]))
    local err = criterion()({pred, y})
    local module = nn.gModule({x, y, prev_s},{err, nn.Identity()(next_s)})
    module:getParameters():uniform(-opts.weight_init, opts.weight_init)
@@ -142,6 +142,9 @@ local function fp(enc_x, enc_y, dec_x, dec_y)
    local ret
    for i = 1, batch.enc_len_seq do
       local s = model.enc_s[i - 1]
+      print(enc_x[i]:size(1))
+      print(enc_y[i]:size(1))
+      print(s:size(1))
       ret = model.encoder[i]:forward({enc_x[i], enc_y[i], s})
       model.enc_error[i] = ret[1]
       model.enc_s[i] = ret[2]
@@ -197,8 +200,9 @@ local function bp(enc_x,enc_y,dec_x,dec_y)
    params.decoderx:add(params.decoderdx:mul(-opts.lr))
 end
 
-local function run()
-   g_init_gpu(1)
+function run()
+   print("\27[31mStaring Experiment\n---------------")
+   g_init_gpu({1})
    local cmd = torch.CmdLine()
    cmd:option('-layers',2)
    cmd:option('-in_size',300)
@@ -207,7 +211,6 @@ local function run()
    cmd:option('-max_grad_norm',5)
    cmd:option('-epochs',7)
    cmd:option('-anneal_after',5)
-   cmd:option('-anneal_every',1)
    cmd:option('-decay',2)
    cmd:option('-weight_init',.08)
    cmd:option('-lr',0.7)
@@ -222,19 +225,22 @@ local function run()
       paths.mkdir(opts.run_dir .. '/model/')
       paths.mkdir(opts.run_dir .. '/log/')
    end
-
+   print(opts)
    print("Saving Options")
    torch.save(paths.concat(opts.run_dir,'opts.th7'),opts)
 
    print("Loading Data")
-   enc_data, dec_data = dataLoader.load()
+   enc_data, dec_data = dataLoader.get()
 
-   print("Creating network")
+   print("\27[31mCreating Network\n----------------")
+   print("Setting up Encoder")
    setupEncoder()
+   print("Setting up Decoder")
    setupDecoder()
    local start = 1
 
    if opts.load_model then
+      print("Loading previous parameters")
       oldModel = torch.load(opts.save_dir .. '/model.th7')
       g_replace_table(params.encoderx,oldModel[1].encoderx)
       g_replace_table(params.encoderdx,oldModel[1].encoderdx)
@@ -247,11 +253,11 @@ local function run()
    local beginning_time = torch.tic()
    local start_time = torch.tic()
    
-   print("Starting training")
+   print("\27[31mTraining\n----------")
    
    for epoch=start,opts.epochs do
       print('Epoch ' .. epoch)
-      if epoch > opts.anneal_epoch then
+      if epoch > opts.anneal_after then
          opts.lr = opts.lr / opts.decay
       end
       
@@ -265,8 +271,8 @@ local function run()
          local enc_line = {}
          local dec_line = {}
          while true do
-            table.insert(enc_line,io:read("*l"))
-            table.insert(dec_line = io:read("*l"))
+            table.insert(enc_line,enc_f:read("*l"))
+            table.insert(dec_line,dec_f:read("*l"))
             if enc_line == nil or dec_line == nil then
                break
             end
@@ -279,47 +285,56 @@ local function run()
          local enc_x = {}
          local enc_y = {}
          batch = {}
-         for i=1,opts.enc_len_max do
-            table.insert(enc_x,torch.zeros(curr_batch_size))
-            table.insert(enc_y,torch.zeros(curr_batch_size))
+         for i=1,enc_data.len_max do
+            table.insert(enc_x,transfer_data(torch.zeros(curr_batch_size)))
+            table.insert(enc_y,transfer_data(torch.zeros(curr_batch_size)))
          end
          local dec_x = {}
          local dec_y = {}
-         for i=1,opts.dec_len_max do
-            table.insert(dec_x,torch.zeros(curr_batch_size))
-            table.insert(dec_y,torch.zeros(curr_batch_size))
+         for i=1,dec_data.len_max do
+            table.insert(dec_x,transfer_data(torch.zeros(curr_batch_size)))
+            table.insert(dec_y,transfer_data(torch.zeros(curr_batch_size)))
          end
          local enc_len_seq = 0
          local dec_len_seq = 0
 
          for i=1,num_lines do
-            local num_word = 1
-            for enc_word in stringx.split(enc_line[i],' ') do
-               if enc_word ~= "" then
-                  enc_x[num_line][num_word] = enc_data.index[enc_word]
-                  num_word = num_word + 1
+            if enc_line[i] ~= nil then
+               local num_word = 1
+               local last_word = ""
+               for _,enc_word in ipairs(stringx.split(enc_line[i],' ')) do
+                  if enc_word ~= "" and num_word <= enc_data.len_max then
+                     enc_x[num_word][i] = enc_data.index[enc_word]
+                     num_word = num_word + 1
+                     last_word = enc_word
+                  end
                end
-            end
 
-            if num_word > enc_len_seq then
-               enc_len_seq = num_word
-            end
-            
-            dec_x[num_line][1] = enc_data.index[enc_word]
-
-            local num_word = 1
-            for dec_word in stringx.split(dec_line[i],' ') do
-               dec_y[num_line][num_word] = dec_data.index[enc_word]
-               if num_word < opts.dec_len_max then
-                  dec_x[num_line][num_word+1] = dec_data.index[enc_word]
+               if num_word > enc_len_seq then
+                  enc_len_seq = num_word
                end
-               num_word = num_word + 1
-            end
+               
+               dec_x[1][i] = enc_data.index[last_word]
 
-            table.remove(dec_x)
+               local num_word = 1
+               local indexes = {}
+               for _,dec_word in ipairs(stringx.split(dec_line[i],' ')) do
+                  if dec_word ~= "" and num_word <= dec_data.len_max then
+                     dec_y[num_word][i] = dec_data.index[dec_word]
+                     indexes[num_word] = dec_data.index[dec_word]
+                     num_word = num_word + 1
+                  end
+               end
 
-            if num_word > dec_len_seq then
-               dec_len_seq = num_word
+               for j=1,#indexes - 1 do
+                  dec_x[j+1][i] = indexes[j]
+               end
+
+               table.remove(dec_x)
+
+               if num_word > dec_len_seq then
+                  dec_len_seq = num_word
+               end
             end
          end
 

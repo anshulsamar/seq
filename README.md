@@ -6,4 +6,4 @@ Model from 'Sequence to Sequence Learning with Neural Networks' (Sutskever, et a
 Built ontop of github.com/wojzaremba/lstm
 
 Some implementation notes:
-- <EOS> and unknown words initialized to unit normal vectors
+- EOS and unknown words initialized to unit normal vectors

@@ -1,16 +1,18 @@
-local DecoderCriterion, parent = torch.class('DecoderCriterion', 'nn.ClassNLLCriterion')
+require 'nn'
 
-function DecoderCriterion:__init(weights)
-   parent.__init(weights)
+local DecCriterion, parent = torch.class('DecCriterion', 'nn.ClassNLLCriterion')
+
+function DecCriterion:__init(weights)
+   parent.__init(self,weights)
 end
 
 
-function DecoderCriterion:__len()
+function DecCriterion:__len()
    return parent.__len()
 end
 
 
-function DecoderCriterion:updateOutput(input, target)
+function DecCriterion:updateOutput(input, target)
    if target == 0 then
       self.output:zero()
       return self.output
@@ -19,7 +21,7 @@ function DecoderCriterion:updateOutput(input, target)
    end
 end
 
-function DecoderCriterion:updateGradInput(input, target)
+function DecCriterion:updateGradInput(input, target)
    if target == 0 then
       self.gradInput:resizeAs(input)
       self.gradInput:zero()

@@ -1,15 +1,17 @@
-local EncoderCriterion, parent = torch.class('EncoderCriterion', 'nn.ClassNLLCriterion')
+require 'nn'
 
-function EncoderCriterion:__init(weights)
-   parent.__init(weights)
+local EncCriterion, parent = torch.class('EncCriterion', 'nn.ClassNLLCriterion')
+
+function EncCriterion:__init(weights)
+   parent.__init(self,weights)
 end
 
-function EncoderCriterion:updateOutput(input, target)
+function EncCriterion:updateOutput(input, target)
    self.output:zero()
    return self.output
 end
 
-function EncoderCriterion:updateGradInput(input, target)
+function EncCriterion:updateGradInput(input, target)
    self.gradInput:resizeAs(input)
    self.gradInput:zero()
    return self.gradInput
