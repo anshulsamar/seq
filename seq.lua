@@ -143,7 +143,7 @@ end
 local function fp(enc_x, enc_y, dec_x, dec_y, batch)
    reset_s()
    local ret
-   for i = 1, batch.enc_len_seq do
+   for i = 1, batch.enc_len_max do
       local s = model.enc_s[i - 1]
       ret = model.encoder[i]:forward({enc_x[i], enc_y[i], s})
       model.enc_err[i] = ret[1]
@@ -154,8 +154,8 @@ local function fp(enc_x, enc_y, dec_x, dec_y, batch)
    --model.dec_s[0][i] = model.enc_s[batch.enc_lengths[i]][i]
    --end
 
-   model.dec_s[0] = model.enc_s[batch.enc_len_seq]
-   for i = 1, batch.dec_len_seq do
+   model.dec_s[0] = model.enc_s[batch.enc_len_max]
+   for i = 1, batch.dec_len_max do
       local s = model.dec_s[i - 1]
       ret = model.decoder[i]:forward({dec_x[i], dec_y[i], s})
       model.dec_err[i] = ret[1]
@@ -168,7 +168,7 @@ local function bp(enc_x,enc_y,dec_x,dec_y, batch)
    params.decoderdx:zero()
    reset_ds()
 
-   for i = batch.dec_len_seq, 1, -1 do
+   for i = batch.dec_len_max, 1, -1 do
       local s = model.dec_s[i-1]
       local derr = transfer_data(torch.ones(1))
       local input = {dec_x[i], dec_y[i], s}
@@ -180,8 +180,8 @@ local function bp(enc_x,enc_y,dec_x,dec_y, batch)
 
    g_replace_table(model.enc_ds,model.dec_ds)
 
-   for i = 0, batch.enc_len_seq-1 do
-      local new_i = batch.enc_len_seq - i
+   for i = 0, batch.enc_len_max-1 do
+      local new_i = batch.enc_len_max - i
       local s = model.enc_s[new_i-1]
       local derr = transfer_data(torch.ones(1))
       local input = {enc_x[new_i], enc_y[new_i], s}
@@ -210,13 +210,13 @@ end
 
 local function getError(batch)
    local tot_enc_err = 0
-   for i = 1, batch.enc_len_seq do
+   for i = 1, batch.enc_len_max do
       tot_enc_err = tot_enc_err + model.enc_err[i]
    end
    tot_enc_err = tot_enc_err * opts.batch_size / batch.size
 
    local tot_dec_err = 0
-   for i = 1, batch.dec_len_seq do
+   for i = 1, batch.dec_len_max do
       tot_dec_err = tot_dec_err + model.dec_err[i]
    end
    
@@ -380,7 +380,7 @@ function run()
     
       while true do
 
-         -- Read Data
+         -- Read in Batch Size
          iteration = iteration + 1
          local enc_line = {}
          local dec_line = {}
@@ -400,22 +400,20 @@ function run()
          initializeEncMat()
          initializeDecMat()
 
-         -- Parse input
-         local enc_len_seq = 0
-         local dec_len_seq = 0
+         -- Load Matrices
+         batch.enc_len_max = 0
+         batch.dec_len_max = 0
          for i=1,#enc_line do
             if enc_line[i] ~= nil then
                enc_num_word, dec_num_word = loadMat(enc_line[i],dec_line[i],i)
-               if enc_num_word > enc_len_seq then
-                  enc_len_seq = enc_num_word
+               if enc_num_word > batch.enc_len_max then
+                  batch.enc_len_max = enc_num_word
                end
-               if dec_num_word > dec_len_seq then
-                  dec_len_seq = dec_num_word
+               if dec_num_word > batch.dec_len_max then
+                  batch.dec_len_max = dec_num_word
                end
             end
          end
-         batch.enc_len_seq = enc_len_seq
-         batch.dec_len_seq = dec_len_seq
 
          -- Forward and Backward Prop
          fp(enc_x,enc_y,dec_x,dec_y,batch)
