@@ -140,7 +140,7 @@ local function reset_ds()
    end
 end
 
-function fp(enc_x, enc_y, dec_x, dec_y, batch)
+local function fp(enc_x, enc_y, dec_x, dec_y, batch)
    reset_s()
    local ret
    for i = 1, batch.enc_len_seq do
@@ -158,7 +158,6 @@ function fp(enc_x, enc_y, dec_x, dec_y, batch)
    for i = 1, batch.dec_len_seq do
       local s = model.dec_s[i - 1]
       ret = model.decoder[i]:forward({dec_x[i], dec_y[i], s})
-      model.enc_err[i] = ret[1]
       model.dec_err[i] = ret[1]
       model.dec_s[i] = ret[2]
    end
@@ -209,72 +208,112 @@ local function bp(enc_x,enc_y,dec_x,dec_y, batch)
 end
 
 
--- check what happens if batch size is less or more or less examples than batch_size
--- currently made default for 0 vector input
--- how to do mini batch with sequence (Because even the 0 input vector gets propogated due to hidden state) 
--- make mini batches similar size
--- what are the errors supposed to be? probabilities? what do I divide by?
+local function getError(batch)
+   local tot_enc_err = 0
+   for i = 1, batch.enc_len_seq do
+      tot_enc_err = tot_enc_err + model.enc_err[i]
+   end
+   tot_enc_err = tot_enc_err * opts.batch_size / batch.curr_batch_size
 
-function run()
-   print("\27[31mStaring Experiment\n---------------")
-   g_init_gpu({1})
+   local tot_dec_err = 0
+   for i = 1, batch.dec_len_seq do
+      tot_dec_err = tot_dec_err + model.dec_err[i]
+   end
+   
+   tot_dec_err = tot_dec_err * opts.batch_size / batch.curr_batch_size
+   return tot_enc_err, tot_dec_err
+end
+
+
+local function log(epoch, iteration, batch)
+   avg_enc_err, avg_dec_err = getError(batch)
+   print('epoch = ' .. epoch ..  
+         ', iteration = ' .. iteration .. 
+         ', enc_error = ' .. string.format('%.4f',avg_enc_err) ..
+         ', dec_error = ' .. string.format('%.4f',avg_dec_err) .. 
+         ', encdxNorm = ' .. string.format('%.4f',params.encoderdx:norm()) ..
+         ', decdxNorm = ' .. string.format('%.4f',params.decoderdx:norm()) .. 
+         ', lr = ' ..  string.format('%.4f',opts.lr))
+end
+
+local function getOpts()
    local cmd = torch.CmdLine()
    cmd:option('-layers',2)
    cmd:option('-in_size',300)
    cmd:option('-rnn_size',300)
    cmd:option('-batch_size',3)
    cmd:option('-max_grad_norm',5)
-   cmd:option('-epochs',1)
+   cmd:option('-epochs',20)
+   cmd:option('-start',1)
+   cmd:option('-anneal',true)
    cmd:option('-anneal_after',5)
-   cmd:option('-decay',2)
+   cmd:option('-decay',1.25)
    cmd:option('-weight_init',.08)
    cmd:option('-lr',0.7)
    cmd:option('-run_dir','./exp/')
    cmd:option('-save_dir','./exp/model/')
    cmd:option('-load_model',false)
-   opts = cmd:parse(arg)
+   local opts = cmd:parse(arg)
+   return opts
+end
 
+local function makeDirectories()
    if paths.dir(opts.run_dir) == nil then
       paths.mkdir(opts.run_dir)
       paths.mkdir(opts.run_dir .. '/data/')
       paths.mkdir(opts.run_dir .. '/model/')
       paths.mkdir(opts.run_dir .. '/log/')
    end
-   print(opts)
+end
+
+local function loadModel()
+   print("Loading previous parameters")
+   oldModel = torch.load(opts.save_dir .. '/model.th7')
+   g_replace_table(params.encoderx,oldModel[1].encoderx)
+   g_replace_table(params.encoderdx,oldModel[1].encoderdx)
+   g_replace_table(params.decoderx,oldModel[1].decoderx)
+   g_replace_table(params.decoderdx,oldModel[1].decoderdx)
+   opts.start = oldModel[2]
+   opts.lr = oldModel[3]
+end
+
+function run()
+   -- Options
+   print("\27[31mStaring Experiment\n---------------")
+   g_init_gpu({1})
+   opts = getOpts()
+   makeDirectories()
+   print('Options: ' .. opts)
    print("Saving Options")
    torch.save(paths.concat(opts.run_dir,'opts.th7'),opts)
 
+   -- Data
    print("Loading Data")
    enc_data, dec_data = dataLoader.get()
 
+   -- Network
    print("\27[31mCreating Network\n----------------")
    print("Setting up Encoder")
    setupEncoder()
    print("Setting up Decoder")
    setupDecoder()
-   local start = 1
+   if opts.load_model then loadModel() end
 
-   if opts.load_model then
-      print("Loading previous parameters")
-      oldModel = torch.load(opts.save_dir .. '/model.th7')
-      g_replace_table(params.encoderx,oldModel[1].encoderx)
-      g_replace_table(params.encoderdx,oldModel[1].encoderdx)
-      g_replace_table(params.decoderx,oldModel[1].decoderx)
-      g_replace_table(params.decoderdx,oldModel[1].decoderdx)
-      start = oldModel[2]
-      opts.lr = oldModel[3]
-   end
-
+   -- Training
    print("\27[31mTraining\n----------")
-   
-   for epoch=start,opts.epochs do
-      if epoch > opts.anneal_after then
+   for epoch=opts.start,opts.epochs do
+
+      local iteration = 0
+
+      -- Anneal
+      if opts.anneal and epoch > opts.anneal_after then
          opts.lr = opts.lr / opts.decay
       end
-      
-      local iteration = 0
+
+      -- Open Data
       local enc_f = io.open(enc_data.file_path,'r')
       local dec_f = io.open(dec_data.file_path,'r')
+    
       while true do
          iteration = iteration + 1
          local num_lines = 0
@@ -369,40 +408,18 @@ function run()
          fp(enc_x,enc_y,dec_x,dec_y,batch)
          bp(enc_x,enc_y,dec_x,dec_y,batch)
 
-         if iteration % 33 == 0 then
-            cutorch.synchronize()
-         end
-         print('batch size ' .. opts.batch_size)
-         print('curr batch size' .. curr_batch_size)
-
-         local tot_enc_err = 0
-         for i = 1, batch.enc_len_seq do
-            tot_enc_err = tot_enc_err + model.enc_err[i]
-         end
-         tot_enc_err = tot_enc_err * opts.batch_size / curr_batch_size
-         local tot_dec_err = 0
-         for i = 1, batch.dec_len_seq do
-            tot_dec_err = tot_dec_err + model.dec_err[i]
-         end
-         
-         tot_dec_err = tot_dec_err * opts.batch_size / curr_batch_size
-
-         print('epoch = ' .. epoch .. ', iteration = ' .. iteration .. ', enc_error = ' .. tot_enc_err .. ', dec_error = ' .. tot_dec_err .. ', encdxNorm = ' .. params.encoderdx:norm() .. ', decdxNorm = ' .. params.decoderdx:norm() .. ', lr = ' ..  opts.lr)
+         log(epoch, iteration, batch)
 
          if curr_batch_size ~= opts.batch_size then
             break
          end
 
-
-
       end
       enc_f:close()
       dec_f:close()
-      print("Saving Model")
       torch.save(opts.save_dir .. '/model.th7', {params, epochs, opts.lr})
    end         
 end
-
 
    
 
