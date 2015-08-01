@@ -140,7 +140,7 @@ local function reset_ds()
    end
 end
 
-local function fp(enc_x, enc_y, dec_x, dec_y, batch)
+function fp(enc_x, enc_y, dec_x, dec_y, batch)
    reset_s()
    local ret
    for i = 1, batch.enc_len_seq do
@@ -158,6 +158,7 @@ local function fp(enc_x, enc_y, dec_x, dec_y, batch)
    for i = 1, batch.dec_len_seq do
       local s = model.dec_s[i - 1]
       ret = model.decoder[i]:forward({dec_x[i], dec_y[i], s})
+      model.enc_err[i] = ret[1]
       model.dec_err[i] = ret[1]
       model.dec_s[i] = ret[2]
    end
@@ -208,17 +209,11 @@ local function bp(enc_x,enc_y,dec_x,dec_y, batch)
 end
 
 
--- group things together that are same size
--- CHANGE BATCH SIZE? BUG?
--- CHANGE CRITERION BACK TO ENC/DEC
--- ENC CRITERION RETURNS 0 instead of vector - bug?
 -- check what happens if batch size is less or more or less examples than batch_size
--- currently default for decy ency is 1
 -- currently made default for 0 vector input
 -- how to do mini batch with sequence (Because even the 0 input vector gets propogated due to hidden state) 
 -- make mini batches similar size
--- print out model.enc_norm stuff using gf3 and since begginning
--- print out errors too
+-- what are the errors supposed to be? probabilities? what do I divide by?
 
 function run()
    print("\27[31mStaring Experiment\n---------------")
@@ -227,9 +222,9 @@ function run()
    cmd:option('-layers',2)
    cmd:option('-in_size',300)
    cmd:option('-rnn_size',300)
-   cmd:option('-batch_size',2)
+   cmd:option('-batch_size',3)
    cmd:option('-max_grad_norm',5)
-   cmd:option('-epochs',7)
+   cmd:option('-epochs',1)
    cmd:option('-anneal_after',5)
    cmd:option('-decay',2)
    cmd:option('-weight_init',.08)
@@ -270,13 +265,9 @@ function run()
       opts.lr = oldModel[3]
    end
 
-   local beginning_time = torch.tic()
-   local start_time = torch.tic()
-   
    print("\27[31mTraining\n----------")
    
    for epoch=start,opts.epochs do
-      print('Epoch ' .. epoch)
       if epoch > opts.anneal_after then
          opts.lr = opts.lr / opts.decay
       end
@@ -289,18 +280,15 @@ function run()
          local num_lines = 0
          local enc_line = {}
          local dec_line = {}
-         while true do
-            table.insert(enc_line,enc_f:read("*l"))
-            table.insert(dec_line,dec_f:read("*l"))
-            if enc_line[#enc_line] == nil or dec_line[#dec_line] == nil then
-               break
-            end
-            num_lines = num_lines + 1
-            if num_lines == opts.batch_size then
-               break
-            end
+         while #enc_line < opts.batch_size do
+            local tmp = enc_f:read("*l")
+            table.insert(enc_line,tmp)
+            tmp = dec_f:read("*l")
+            table.insert(dec_line,tmp)
+            if (tmp == nil) then break end
          end
-         local curr_batch_size = num_lines
+
+         local curr_batch_size = #enc_line
 
          if curr_batch_size == 0 then break end
 
@@ -308,24 +296,24 @@ function run()
          local enc_y = {}
          local batch = {}
          batch.curr_batch_size = curr_batch_size
-         batch.enc_lengths = torch.zeros(curr_batch_size)
-         batch.dec_lengths = torch.zeros(curr_batch_size)
+         batch.enc_lengths = torch.zeros(opts.batch_size)
+         batch.dec_lengths = torch.zeros(opts.batch_size)
          for i=1,enc_data.len_max do
-            local x_init = torch.ones(curr_batch_size) * enc_data.default_index
+            local x_init = torch.ones(opts.batch_size) * enc_data.default_index
             table.insert(enc_x,transfer_data(x_init))
-            table.insert(enc_y,transfer_data(torch.zeros(curr_batch_size)))
+            table.insert(enc_y,transfer_data(torch.zeros(opts.batch_size)))
          end
          local dec_x = {}
          local dec_y = {}
          for i=1,dec_data.len_max do
-            local x_init = torch.ones(curr_batch_size) * dec_data.default_index
+            local x_init = torch.ones(opts.batch_size) * dec_data.default_index
             table.insert(dec_x,transfer_data(x_init))
-            table.insert(dec_y,transfer_data(torch.zeros(curr_batch_size)))
+            table.insert(dec_y,transfer_data(torch.zeros(opts.batch_size)))
          end
          local enc_len_seq = 0
          local dec_len_seq = 0
 
-         for i=1,num_lines do
+         for i=1,#enc_line do
             if enc_line[i] ~= nil then
                local num_word = 0
                local last_word = ""
@@ -378,25 +366,39 @@ function run()
          batch.enc_len_seq = enc_len_seq
          batch.dec_len_seq = dec_len_seq
 
-         print("Forward")
          fp(enc_x,enc_y,dec_x,dec_y,batch)
-         print("Backward")
          bp(enc_x,enc_y,dec_x,dec_y,batch)
+
+         if iteration % 33 == 0 then
+            cutorch.synchronize()
+         end
+         print('batch size ' .. opts.batch_size)
+         print('curr batch size' .. curr_batch_size)
+
+         local tot_enc_err = 0
+         for i = 1, batch.enc_len_seq do
+            tot_enc_err = tot_enc_err + model.enc_err[i]
+         end
+         tot_enc_err = tot_enc_err * opts.batch_size / curr_batch_size
+         local tot_dec_err = 0
+         for i = 1, batch.dec_len_seq do
+            tot_dec_err = tot_dec_err + model.dec_err[i]
+         end
+         
+         tot_dec_err = tot_dec_err * opts.batch_size / curr_batch_size
+
+         print('epoch = ' .. epoch .. ', iteration = ' .. iteration .. ', enc_error = ' .. tot_enc_err .. ', dec_error = ' .. tot_dec_err .. ', encdxNorm = ' .. params.encoderdx:norm() .. ', decdxNorm = ' .. params.decoderdx:norm() .. ', lr = ' ..  opts.lr)
 
          if curr_batch_size ~= opts.batch_size then
             break
          end
 
-         if iteration % 33 == 0 then
-            cutorch.synchronize()
-         end
 
-         print('epoch = ' .. epoch .. 'iteration = ' .. iteration .. 'lr = ' ..  opts.lr)
 
       end
-      print('Finished epoch')
       enc_f:close()
       dec_f:close()
+      print("Saving Model")
       torch.save(opts.save_dir .. '/model.th7', {params, epochs, opts.lr})
    end         
 end
