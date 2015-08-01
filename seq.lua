@@ -150,7 +150,7 @@ local function fp(enc_x, enc_y, dec_x, dec_y, batch)
       model.enc_s[i] = ret[2]
    end
 
-   --for i = 1, batch.curr_batch_size do
+   --for i = 1, batch.size do
    --model.dec_s[0][i] = model.enc_s[batch.enc_lengths[i]][i]
    --end
 
@@ -213,14 +213,14 @@ local function getError(batch)
    for i = 1, batch.enc_len_seq do
       tot_enc_err = tot_enc_err + model.enc_err[i]
    end
-   tot_enc_err = tot_enc_err * opts.batch_size / batch.curr_batch_size
+   tot_enc_err = tot_enc_err * opts.batch_size / batch.size
 
    local tot_dec_err = 0
    for i = 1, batch.dec_len_seq do
       tot_dec_err = tot_dec_err + model.dec_err[i]
    end
    
-   tot_dec_err = tot_dec_err * opts.batch_size / batch.curr_batch_size
+   tot_dec_err = tot_dec_err * opts.batch_size / batch.size
    return tot_enc_err, tot_dec_err
 end
 
@@ -277,13 +277,77 @@ local function loadModel()
    opts.lr = oldModel[3]
 end
 
+local function initializeBatch(size)
+   batch.size = size
+   batch.enc_lengths = torch.zeros(opts.batch_size)
+   batch.dec_lengths = torch.zeros(opts.batch_size)
+end
+
+local function initializeEncMat()
+   for i=1,enc_data.len_max do
+      local x_init = torch.ones(opts.batch_size) * enc_data.default_index
+      table.insert(enc_x,transfer_data(x_init))
+      table.insert(enc_y,transfer_data(torch.zeros(opts.batch_size)))
+   end
+end
+
+local function initializeDecMat()
+   for i=1,dec_data.len_max do
+      local x_init = torch.ones(opts.batch_size) * dec_data.default_index
+      table.insert(dec_x,transfer_data(x_init))
+      table.insert(dec_y,transfer_data(torch.zeros(opts.batch_size)))
+   end
+end
+
+local function loadMat(encLine,decLine,i)
+
+   local enc_num_word = 0
+   local last_word = ""
+   local len = 0
+   for _,enc_word in ipairs(stringx.split(encLine,' ')) do
+      if enc_word ~= "" and len < enc_data.len_max  then
+         len = len + 1
+      end
+   end
+   local offset = enc_data.len_max - len
+   for _,enc_word in ipairs(stringx.split(encLine,' ')) do
+      if enc_word ~= "" and enc_num_word < enc_data.len_max  then
+         enc_num_word = enc_num_word + 1
+         enc_x[enc_num_word + offset][i] = enc_data.index[enc_word]
+         last_word = enc_word
+      end
+   end
+
+   batch.enc_lengths[i] = enc_num_word
+   
+   dec_x[1][i] = enc_data.index[last_word]
+
+   local dec_num_word = 0
+   local indexes = {}
+   for _,dec_word in ipairs(stringx.split(decLine,' ')) do
+      if dec_word ~= "" and dec_num_word < dec_data.len_max then
+         dec_num_word = dec_num_word + 1
+         dec_y[dec_num_word][i] = dec_data.index[dec_word]
+         indexes[dec_num_word] = {dec_data.index[dec_word],dec_word}
+      end
+   end
+
+   for j=1,#indexes - 1 do
+      dec_x[j+1][i] = indexes[j][1]
+   end
+
+   batch.dec_lengths[i] = dec_num_word
+
+   return enc_num_word, dec_num_word
+end
+
 function run()
    -- Options
    print("\27[31mStaring Experiment\n---------------")
    g_init_gpu({1})
    opts = getOpts()
    makeDirectories()
-   print('Options: ' .. opts)
+   print(opts)
    print("Saving Options")
    torch.save(paths.concat(opts.run_dir,'opts.th7'),opts)
 
@@ -315,8 +379,9 @@ function run()
       local dec_f = io.open(dec_data.file_path,'r')
     
       while true do
+
+         -- Read Data
          iteration = iteration + 1
-         local num_lines = 0
          local enc_line = {}
          local dec_line = {}
          while #enc_line < opts.batch_size do
@@ -327,96 +392,43 @@ function run()
             if (tmp == nil) then break end
          end
 
-         local curr_batch_size = #enc_line
+         if #enc_line == 0 then break end
 
-         if curr_batch_size == 0 then break end
+         -- Initialize Matrices
+         enc_x, enc_y, dec_x, dec_y, batch = {}, {}, {}, {}, {}
+         initializeBatch(#enc_line)
+         initializeEncMat()
+         initializeDecMat()
 
-         local enc_x = {}
-         local enc_y = {}
-         local batch = {}
-         batch.curr_batch_size = curr_batch_size
-         batch.enc_lengths = torch.zeros(opts.batch_size)
-         batch.dec_lengths = torch.zeros(opts.batch_size)
-         for i=1,enc_data.len_max do
-            local x_init = torch.ones(opts.batch_size) * enc_data.default_index
-            table.insert(enc_x,transfer_data(x_init))
-            table.insert(enc_y,transfer_data(torch.zeros(opts.batch_size)))
-         end
-         local dec_x = {}
-         local dec_y = {}
-         for i=1,dec_data.len_max do
-            local x_init = torch.ones(opts.batch_size) * dec_data.default_index
-            table.insert(dec_x,transfer_data(x_init))
-            table.insert(dec_y,transfer_data(torch.zeros(opts.batch_size)))
-         end
+         -- Parse input
          local enc_len_seq = 0
          local dec_len_seq = 0
-
          for i=1,#enc_line do
             if enc_line[i] ~= nil then
-               local num_word = 0
-               local last_word = ""
-               local len = 0
-               for _,enc_word in ipairs(stringx.split(enc_line[i],' ')) do
-                  if enc_word ~= "" and len < enc_data.len_max  then
-                     len = len + 1
-                  end
+               enc_num_word, dec_num_word = loadMat(enc_line[i],dec_line[i],i)
+               if enc_num_word > enc_len_seq then
+                  enc_len_seq = enc_num_word
                end
-               local offset = enc_data.len_max - len
-               for _,enc_word in ipairs(stringx.split(enc_line[i],' ')) do
-                  if enc_word ~= "" and num_word < enc_data.len_max  then
-                     num_word = num_word + 1
-                     enc_x[num_word + offset][i] = enc_data.index[enc_word]
-                     last_word = enc_word
-                  end
+               if dec_num_word > dec_len_seq then
+                  dec_len_seq = dec_num_word
                end
-
-               if num_word > enc_len_seq then
-                  enc_len_seq = num_word
-               end
-
-               batch.enc_lengths[i] = num_word
-               
-               dec_x[1][i] = enc_data.index[last_word]
-
-               local num_word = 0
-               local indexes = {}
-               for _,dec_word in ipairs(stringx.split(dec_line[i],' ')) do
-                  if dec_word ~= "" and num_word < dec_data.len_max then
-                     num_word = num_word + 1
-                     dec_y[num_word][i] = dec_data.index[dec_word]
-                     indexes[num_word] = {dec_data.index[dec_word],dec_word}
-                  end
-               end
-
-               for j=1,#indexes - 1 do
-                  dec_x[j+1][i] = indexes[j][1]
-               end
-
-               if num_word > dec_len_seq then
-                  dec_len_seq = num_word
-               end
-
-               batch.dec_lengths[i] = num_word
-
             end
          end
-
          batch.enc_len_seq = enc_len_seq
          batch.dec_len_seq = dec_len_seq
 
+         -- Forward and Backward Prop
          fp(enc_x,enc_y,dec_x,dec_y,batch)
          bp(enc_x,enc_y,dec_x,dec_y,batch)
-
          log(epoch, iteration, batch)
-
-         if curr_batch_size ~= opts.batch_size then
+         if batch.size ~= opts.batch_size then
             break
          end
-
       end
       enc_f:close()
       dec_f:close()
+
+      -- Saving
       torch.save(opts.save_dir .. '/model.th7', {params, epochs, opts.lr})
    end         
 end
