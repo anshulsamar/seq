@@ -78,7 +78,8 @@ local function create_network(criterion,lookup,lookup_size,vocab_size)
 end
 
 local function setupEncoder()
-   encoder = create_network(EncCriterion,enc_data.lookup,enc_data.lookup_size,enc_data.vocab_size)
+   encoder = create_network(EncCriterion,enc_data.lookup,
+                            enc_data.lookup_size,enc_data.vocab_size)
    params.encoderx, params.encoderdx = encoder:getParameters()
    model.encoder = g_cloneManyTimes(encoder, enc_data.len_max)
    model.enc_s = {}
@@ -99,7 +100,8 @@ local function setupEncoder()
 end
 
 local function setupDecoder()
-   decoder = create_network(DecCriterion,dec_data.lookup,dec_data.lookup_size,dec_data.vocab_size)
+   decoder = create_network(DecCriterion,dec_data.lookup,
+                            dec_data.lookup_size,dec_data.vocab_size)
    params.decoderx, params.decoderdx = decoder:getParameters()
    model.decoder = g_cloneManyTimes(decoder, dec_data.len_max)
    model.dec_s = {}
@@ -227,8 +229,8 @@ end
 
 local function log(epoch, iteration, batch)
    avg_enc_err, avg_dec_err = getError(batch)
-   print('epoch = ' .. epoch ..  
-         ', iteration = ' .. iteration .. 
+   print('epoch = ' .. string.format('%02d',epoch) ..  
+         ', iteration = ' .. string.format('%04d',iteration) ..
          ', enc_error = ' .. string.format('%.4f',avg_enc_err) ..
          ', dec_error = ' .. string.format('%.4f',avg_dec_err) .. 
          ', encdxNorm = ' .. string.format('%.4f',params.encoderdx:norm()) ..
@@ -244,7 +246,7 @@ local function getOpts()
    cmd:option('-batch_size',3)
    cmd:option('-max_grad_norm',5)
    cmd:option('-epochs',20)
-   cmd:option('-start',1)
+   cmd:option('-start',0)
    cmd:option('-anneal',true)
    cmd:option('-anneal_after',5)
    cmd:option('-decay',1.25)
@@ -252,7 +254,7 @@ local function getOpts()
    cmd:option('-lr',0.7)
    cmd:option('-run_dir','./exp/')
    cmd:option('-save_dir','./exp/model/')
-   cmd:option('-load_model',false)
+   cmd:option('-load_model',true)
    local opts = cmd:parse(arg)
    return opts
 end
@@ -267,14 +269,19 @@ local function makeDirectories()
 end
 
 local function loadModel()
-   print("Loading previous parameters")
-   oldModel = torch.load(opts.save_dir .. '/model.th7')
-   g_replace_table(params.encoderx,oldModel[1].encoderx)
-   g_replace_table(params.encoderdx,oldModel[1].encoderdx)
-   g_replace_table(params.decoderx,oldModel[1].decoderx)
-   g_replace_table(params.decoderdx,oldModel[1].decoderdx)
-   opts.start = oldModel[2]
-   opts.lr = oldModel[3]
+   filen = opts.save_dir .. '/model.th7'
+   if (paths.filep(filen)) then
+      print("Loading previous parameters")
+      oldModel = torch.load(opts.save_dir .. '/model.th7')
+      params.encoderx:copy(oldModel[1].encoderx)
+      params.encoderdx:copy(oldModel[1].encoderdx)
+      params.decoderx:copy(oldModel[1].decoderx)
+      params.decoderdx:copy(oldModel[1].decoderdx)
+      opts.start = oldModel[2]
+      opts.lr = oldModel[3]
+   else
+      print('No model to load, training from scratch')
+   end
 end
 
 local function initializeBatch(size)
@@ -365,12 +372,12 @@ function run()
 
    -- Training
    print("\27[31mTraining\n----------")
-   for epoch=opts.start,opts.epochs do
+   for epoch=1,(opts.epochs - opts.start) do
 
       local iteration = 0
 
       -- Anneal
-      if opts.anneal and epoch > opts.anneal_after then
+      if opts.anneal and (epoch + opts.start) > opts.anneal_after then
          opts.lr = opts.lr / opts.decay
       end
 
@@ -418,16 +425,18 @@ function run()
          -- Forward and Backward Prop
          fp(enc_x,enc_y,dec_x,dec_y,batch)
          bp(enc_x,enc_y,dec_x,dec_y,batch)
-         log(epoch, iteration, batch)
+         log(epoch + opts.start, iteration, batch)
          if batch.size ~= opts.batch_size then
             break
          end
       end
+
       enc_f:close()
       dec_f:close()
 
       -- Saving
-      torch.save(opts.save_dir .. '/model.th7', {params, epochs, opts.lr})
+      torch.save(opts.save_dir .. '/model.th7', 
+                 {params, epoch + opts.start, opts.lr})
    end         
 end
 
