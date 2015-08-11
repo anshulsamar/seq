@@ -20,8 +20,8 @@ local function transfer_data(x)
    return x:cuda()
 end
 
+model = {}
 local encoder, decoder
-local model = {}
 local params = {encoderx ={}, encoderdx = {}, decoderx = {}, decoderdx = {}}
 local data = {}
 
@@ -75,6 +75,7 @@ local function create_network(criterion,lookup,lookup_size,vocab_size)
    local module = nn.gModule({x, y, prev_s},{err, nn.Identity()(next_s)})
    module:getParameters():uniform(-opts.weight_init, opts.weight_init)
    return transfer_data(module)
+
 end
 
 local function setupEncoder()
@@ -161,8 +162,10 @@ local function fp(enc_x, enc_y, dec_x, dec_y, batch)
       local s = model.dec_s[i - 1]
       ret = model.decoder[i]:forward({dec_x[i], dec_y[i], s})
       model.dec_err[i] = ret[1]
+      print(model.dec_err[i])
       model.dec_s[i] = ret[2]
    end
+
 end
 
 local function bp(enc_x,enc_y,dec_x,dec_y, batch)
@@ -194,7 +197,9 @@ local function bp(enc_x,enc_y,dec_x,dec_y, batch)
       cutorch.synchronize()
    end
 
+
    model.enc_norm_dw = params.encoderdx:norm()
+
    if model.enc_norm_dw > opts.max_grad_norm then
       local shrink_factor = opts.max_grad_norm/model.enc_norm_dw
       params.encoderdx:mul(shrink_factor)
@@ -202,6 +207,7 @@ local function bp(enc_x,enc_y,dec_x,dec_y, batch)
    params.encoderx:add(params.encoderdx:mul(-opts.lr))
 
    model.dec_norm_dw = params.decoderdx:norm()
+
    if model.dec_norm_dw > opts.max_grad_norm then
       local shrink_factor = opts.max_grad_norm/model.dec_norm_dw
       params.decoderdx:mul(shrink_factor)
@@ -210,7 +216,7 @@ local function bp(enc_x,enc_y,dec_x,dec_y, batch)
 end
 
 
-local function getError(batch)
+local function getError()
    local tot_enc_err = 0
    for i = 1, batch.enc_len_max do
       tot_enc_err = tot_enc_err + model.enc_err[i]
@@ -227,42 +233,26 @@ local function getError(batch)
 end
 
 
-local function log(epoch, iteration, batch)
-   avg_enc_err, avg_dec_err = getError(batch)
-   print('epoch = ' .. string.format('%02d',epoch) ..  
-         ', iteration = ' .. string.format('%04d',iteration) ..
-         ', enc_error = ' .. string.format('%.4f',avg_enc_err) ..
-         ', dec_error = ' .. string.format('%.4f',avg_dec_err) .. 
-         ', encdxNorm = ' .. string.format('%.4f',params.encoderdx:norm()) ..
-         ', decdxNorm = ' .. string.format('%.4f',params.decoderdx:norm()) .. 
-         ', lr = ' ..  string.format('%.4f',opts.lr))
-end
-
-local function getOpts()
-   local cmd = torch.CmdLine()
-   cmd:option('-layers',2)
-   cmd:option('-in_size',300)
-   cmd:option('-rnn_size',300)
-   cmd:option('-batch_size',3)
-   cmd:option('-max_grad_norm',5)
-   cmd:option('-epochs',20)
-   cmd:option('-start',0)
-   cmd:option('-anneal',true)
-   cmd:option('-anneal_after',5)
-   cmd:option('-decay',1.25)
-   cmd:option('-weight_init',.08)
-   cmd:option('-lr',0.7)
-   cmd:option('-run_dir','./exp/')
-   cmd:option('-save_dir','./exp/model/')
-   cmd:option('-load_model',true)
-   local opts = cmd:parse(arg)
-   return opts
+local function log(epoch, iter)
+   stats.enc_err, stats.dec_err = getError()
+   stats.avg_enc_err = ((stats.avg_enc_err * (iter-1)) + stats.enc_err)/iter
+   stats.avg_dec_err = ((stats.avg_dec_err * (iter-1)) + stats.dec_err)/iter
+   print('epoch=' .. string.format('%02d',epoch + opts.start) ..  
+         ', iter=' .. string.format('%03d',iter) ..
+         ', enc_err=' .. string.format('%.2f',stats.enc_err) ..
+         ', avg_enc_err=' .. string.format('%.2f',stats.avg_enc_err) ..
+         ', dec_err=' .. string.format('%.2f',stats.dec_err) .. 
+         ', avg_dec_err=' .. string.format('%.2f',stats.avg_dec_err) ..
+         ', encdxNorm=' .. string.format('%.4f',model.enc_norm_dw) ..
+         ', decdxNorm=' .. string.format('%.4f',model.dec_norm_dw) .. 
+         ', lr=' ..  string.format('%.3f',opts.lr))
 end
 
 local function makeDirectories()
    if paths.dir(opts.run_dir) == nil then
       paths.mkdir(opts.run_dir)
       paths.mkdir(opts.run_dir .. '/data/')
+      paths.mkdir(opts.run_dir .. '/decode/')
       paths.mkdir(opts.run_dir .. '/model/')
       paths.mkdir(opts.run_dir .. '/log/')
    end
@@ -348,9 +338,56 @@ local function loadMat(encLine,decLine,i)
    return enc_num_word, dec_num_word
 end
 
+local function decode(epoch,iter,batch,dec_line)
+
+   local indexes = {}
+   for i=1,#model.output do
+      local y, ind = torch.max(model.output[i],2)
+      table.insert(indexes,ind)
+   end
+
+   local decodeName = 'decode_' .. epoch .. '_' .. iter .. '.txt'
+   local f = io.open(opts.decode_dir .. decodeName,'a+')
+
+   for i=1,#dec_line do
+      local num_words = batch.dec_line_length[i]
+      local sentence = ''
+      for j=1,num_words do
+         sentence = sentence .. dec_data.rev_index[indexes[j][i][1]] .. ' '
+      end
+      f:write(sentence,'\n')
+      f:flush()
+   end
+
+   f:close()
+
+end
+
+local function getOpts()
+   local cmd = torch.CmdLine()
+   cmd:option('-layers',2)
+   cmd:option('-in_size',300)
+   cmd:option('-rnn_size',300)
+   cmd:option('-batch_size',2)
+   cmd:option('-max_grad_norm',5)
+   cmd:option('-max_epoch',10)
+   cmd:option('-start',0)
+   cmd:option('-anneal',false)
+   cmd:option('-anneal_after',4)
+   cmd:option('-decay',2)
+   cmd:option('-weight_init',.1)
+   cmd:option('-lr',0.1)
+   cmd:option('-run_dir','./exp/')
+   cmd:option('-decode_dir','./exp/decode/')
+   cmd:option('-save_dir','./exp/model/')
+   cmd:option('-load_model',false)
+   local opts = cmd:parse(arg)
+   return opts
+end
+
 function run()
    -- Options
-   print("\27[31mStaring Experiment\n---------------")
+   print("\27[31mStarting Experiment\n---------------")
    g_init_gpu({1})
    opts = getOpts()
    makeDirectories()
@@ -372,9 +409,14 @@ function run()
 
    -- Training
    print("\27[31mTraining\n----------")
-   for epoch=1,(opts.epochs - opts.start) do
+   for epoch=1,(opts.max_epoch - opts.start) do
 
-      local iteration = 0
+      -- Setup
+      local iter = 0
+      stats = {}
+      stats.avg_enc_err = 0
+      stats.avg_dec_err = 0
+      model.output = {}
 
       -- Anneal
       if opts.anneal and (epoch + opts.start) > opts.anneal_after then
@@ -388,7 +430,7 @@ function run()
       while true do
 
          -- Read in Batch Size
-         iteration = iteration + 1
+         iter = iter + 1
          local enc_line = {}
          local dec_line = {}
          while #enc_line < opts.batch_size do
@@ -410,6 +452,7 @@ function run()
          -- Load Matrices
          batch.enc_len_max = 0
          batch.dec_len_max = 0
+         batch.dec_line_length = {}
          for i=1,#enc_line do
             if enc_line[i] ~= nil then
                enc_num_word, dec_num_word = loadMat(enc_line[i],dec_line[i],i)
@@ -419,13 +462,16 @@ function run()
                if dec_num_word > batch.dec_len_max then
                   batch.dec_len_max = dec_num_word
                end
+               batch.dec_line_length[i] = dec_num_word
             end
          end
 
          -- Forward and Backward Prop
          fp(enc_x,enc_y,dec_x,dec_y,batch)
          bp(enc_x,enc_y,dec_x,dec_y,batch)
-         log(epoch + opts.start, iteration, batch)
+
+         log(epoch, iter)
+         decode(epoch,iter,batch,dec_line)
          if batch.size ~= opts.batch_size then
             break
          end

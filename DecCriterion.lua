@@ -13,6 +13,7 @@ end
 
 
 function DecCriterion:updateOutput(input, target)
+   table.insert(model.output,input:exp())
    if target == 0 then
       self.output:zero()
       return self.output
