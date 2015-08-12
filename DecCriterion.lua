@@ -13,12 +13,17 @@ end
 
 
 function DecCriterion:updateOutput(input, target)
-   table.insert(model.output,input:exp())
+   table.insert(model.output,torch.exp(input))
+   --print(target)
+   --print(input)
+   --print(torch.exp(input))
    if target == 0 then
       self.output:zero()
       return self.output
    else
-      return parent.updateOutput(self,input,target)
+      local ret = parent.updateOutput(self,input,target)
+      --print('Error ' .. ret)
+      return ret
    end
 end
 
