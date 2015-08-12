@@ -367,7 +367,7 @@ local function getOpts()
    cmd:option('-layers',2)
    cmd:option('-in_size',300)
    cmd:option('-rnn_size',300)
-   cmd:option('-batch_size',10)
+   cmd:option('-batch_size',64)
    cmd:option('-max_grad_norm',5)
    cmd:option('-max_epoch',10)
    cmd:option('-start',0)
@@ -415,7 +415,6 @@ function run()
       stats = {}
       stats.avg_enc_err = 0
       stats.avg_dec_err = 0
-      model.output = {}
 
       -- Anneal
       if opts.anneal and (epoch + opts.start) > opts.anneal_after then
@@ -430,6 +429,7 @@ function run()
 
          -- Read in Batch Size
          iter = iter + 1
+         model.output = {}
          local enc_line = {}
          local dec_line = {}
          while #enc_line < opts.batch_size do
@@ -447,6 +447,8 @@ function run()
          initializeBatch(#enc_line)
          initializeEncMat()
          initializeDecMat()
+
+         collectgarbage()
 
          -- Load Matrices
          batch.enc_len_max = 0
@@ -475,8 +477,7 @@ function run()
             break
          end
 
-         collectgarbage()
-         os.execute("nvidia-smi")
+         --os.execute("nvidia-smi")
       end
 
       enc_f:close()
