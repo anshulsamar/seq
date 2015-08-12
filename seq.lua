@@ -162,7 +162,6 @@ local function fp(enc_x, enc_y, dec_x, dec_y, batch)
       local s = model.dec_s[i - 1]
       ret = model.decoder[i]:forward({dec_x[i], dec_y[i], s})
       model.dec_err[i] = ret[1]
-      print(model.dec_err[i])
       model.dec_s[i] = ret[2]
    end
 
@@ -368,7 +367,7 @@ local function getOpts()
    cmd:option('-layers',2)
    cmd:option('-in_size',300)
    cmd:option('-rnn_size',300)
-   cmd:option('-batch_size',2)
+   cmd:option('-batch_size',10)
    cmd:option('-max_grad_norm',5)
    cmd:option('-max_epoch',10)
    cmd:option('-start',0)
@@ -376,7 +375,7 @@ local function getOpts()
    cmd:option('-anneal_after',4)
    cmd:option('-decay',2)
    cmd:option('-weight_init',.1)
-   cmd:option('-lr',0.1)
+   cmd:option('-lr',.7)
    cmd:option('-run_dir','./exp/')
    cmd:option('-decode_dir','./exp/decode/')
    cmd:option('-save_dir','./exp/model/')
@@ -467,14 +466,17 @@ function run()
          end
 
          -- Forward and Backward Prop
+         -- print(enc_line[1])
          fp(enc_x,enc_y,dec_x,dec_y,batch)
          bp(enc_x,enc_y,dec_x,dec_y,batch)
-
          log(epoch, iter)
          decode(epoch,iter,batch,dec_line)
          if batch.size ~= opts.batch_size then
             break
          end
+
+         collectgarbage()
+         os.execute("nvidia-smi")
       end
 
       enc_f:close()

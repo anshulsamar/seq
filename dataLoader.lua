@@ -34,7 +34,7 @@ function M.getWordEmbeddings(path,index,size)
       if (count == size) then
          break
       end
-      if (count == 5000) then
+      if (count == 1) then
          break
       end
    end
@@ -149,6 +149,7 @@ function M.get()
    print("Note: current parser meant for prose")
    print("Note: not all glove vectors loaded for speed purposes")
    print("Note: minimum glove vectors used for debugging")
+   print("Note: NO SHUFFLING")
 
    print("\27[31mEncoder Data\n-------------")
 
@@ -206,10 +207,10 @@ function M.get()
    
    print("Shuffle Data")
 
-   os.execute("paste -d \':\' " .. enc_d.file_path .. ' ' .. dec_d.file_path .. " | shuf | awk -v FS=\":\" \'{ print $1 > \"" .. enc_d.file_path .. '.shuf' .. "\" ; print $2 > \"" .. dec_d.file_path .. '.shuf' .. "\" }\'")
+   --os.execute("paste -d \':\' " .. enc_d.file_path .. ' ' .. dec_d.file_path .. " | shuf | awk -v FS=\":\" \'{ print $1 > \"" .. enc_d.file_path .. '.shuf' .. "\" ; print $2 > \"" .. dec_d.file_path .. '.shuf' .. "\" }\'")
 
-   enc_d.file_path = enc_d.file_path .. '.shuf'
-   dec_d.file_path = dec_d.file_path .. '.shuf'
+   --enc_d.file_path = enc_d.file_path .. '.shuf'
+   --dec_d.file_path = dec_d.file_path .. '.shuf'
 
    return enc_d, dec_d
 end
