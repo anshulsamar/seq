@@ -15,6 +15,8 @@ require 'base'
 require 'dataLoader'
 require 'reload'
 require 'paths'
+require 'gnuplot'
+require 'math'
 
 local function transfer_data(x)
    return x:cuda()
@@ -232,7 +234,7 @@ local function getError()
 end
 
 
-local function log(epoch, iter)
+local function log(epoch, iter, max_iter)
    stats.enc_err, stats.dec_err = getError()
    stats.avg_enc_err = ((stats.avg_enc_err * (iter-1)) + stats.enc_err)/iter
    stats.avg_dec_err = ((stats.avg_dec_err * (iter-1)) + stats.dec_err)/iter
@@ -245,6 +247,12 @@ local function log(epoch, iter)
          ', encdxNorm=' .. string.format('%.4f',model.enc_norm_dw) ..
          ', decdxNorm=' .. string.format('%.4f',model.dec_norm_dw) .. 
          ', lr=' ..  string.format('%.3f',opts.lr))
+
+
+   local logName = opts.log_dir .. 'log.txt'
+   if iter == max_iter then
+      table.insert(stats.avg_dec_err_epoch,stats.avg_dec_err)
+   end
 end
 
 local function makeDirectories()
@@ -261,17 +269,31 @@ local function loadModel()
    filen = opts.save_dir .. '/model.th7'
    if (paths.filep(filen)) then
       print("Loading previous parameters")
-      oldModel = torch.load(opts.save_dir .. '/model.th7')
+      local oldModel = torch.load(opts.save_dir .. '/model.th7')
       params.encoderx:copy(oldModel[1].encoderx)
       params.encoderdx:copy(oldModel[1].encoderdx)
       params.decoderx:copy(oldModel[1].decoderx)
       params.decoderdx:copy(oldModel[1].decoderdx)
       opts.start = oldModel[2]
       opts.lr = oldModel[3]
+      stats = oldModel[4]
    else
       print('No model to load, training from scratch')
    end
 end
+
+function plotErr(modelFile)
+   if stats == nil then
+      local oldModel = torch.load(modelFile)
+      stats = oldModel[4]
+   end
+
+   gnuplot.plot(torch.Tensor(stats.avg_dec_err_epoch))
+   gnuplot.title('Average Decoder Error vs Epochs')
+   gnuplot.xlabel('Epoch')
+   gnuplot.ylabel('Negative Log Likelihood')
+end
+
 
 local function initializeBatch(size)
    batch.size = size
@@ -367,7 +389,7 @@ local function getOpts()
    cmd:option('-layers',2)
    cmd:option('-in_size',300)
    cmd:option('-rnn_size',300)
-   cmd:option('-batch_size',64)
+   cmd:option('-batch_size',1)
    cmd:option('-max_grad_norm',5)
    cmd:option('-max_epoch',10)
    cmd:option('-start',0)
@@ -379,6 +401,7 @@ local function getOpts()
    cmd:option('-run_dir','./exp/')
    cmd:option('-decode_dir','./exp/decode/')
    cmd:option('-save_dir','./exp/model/')
+   cmd:option('-log_dir','./exp/log/')
    cmd:option('-load_model',false)
    local opts = cmd:parse(arg)
    return opts
@@ -397,6 +420,8 @@ function run()
    -- Data
    print("Loading Data")
    enc_data, dec_data = dataLoader.get()
+   local max_iter = math.ceil(enc_data.total_lines/opts.batch_size)
+   print(max_iter)
 
    -- Network
    print("\27[31mCreating Network\n----------------")
@@ -408,13 +433,18 @@ function run()
 
    -- Training
    print("\27[31mTraining\n----------")
+   stats = {}
+   stats.avg_dec_err_epoch = {}
+
    for epoch=1,(opts.max_epoch - opts.start) do
 
       -- Setup
       local iter = 0
-      stats = {}
+
       stats.avg_enc_err = 0
       stats.avg_dec_err = 0
+      stats.dec_err = 0
+      stats.enc_err = 0
 
       -- Anneal
       if opts.anneal and (epoch + opts.start) > opts.anneal_after then
@@ -471,7 +501,7 @@ function run()
          -- print(enc_line[1])
          fp(enc_x,enc_y,dec_x,dec_y,batch)
          bp(enc_x,enc_y,dec_x,dec_y,batch)
-         log(epoch, iter)
+         log(epoch, iter, max_iter)
          decode(epoch,iter,batch,dec_line)
          if batch.size ~= opts.batch_size then
             break
@@ -485,7 +515,7 @@ function run()
 
       -- Saving
       torch.save(opts.save_dir .. '/model.th7', 
-                 {params, epoch + opts.start, opts.lr})
+                 {params, epoch + opts.start, opts.lr, stats})
    end         
 end
 
