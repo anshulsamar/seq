@@ -52,7 +52,7 @@ function M.parseDataset(data_path,file_path)
    local f = io.open(file_path,'w')
    local total_lines = 0
    for filename in io.popen('ls -a ' .. data_path):lines() do
-      if filename ~= '.' and filename ~= '..' then
+      if filename ~= '.' and filename ~= '..' and filename:sub(#filename,#filename) ~= '~' and filename:sub(#filename,#filename) ~= '#' then
          print("Loading " .. filename)
          local data = io.open(data_path .. filename, 'r')
          for line in data:read('*a'):gmatch('.-[%.%?!]') do
@@ -60,7 +60,7 @@ function M.parseDataset(data_path,file_path)
             for word in line:lower():gmatch("%a+") do
                len = len + 1
             end
-            if (len < 25) then 
+            if (len < 25 and len > 0) then 
                total_lines = total_lines + 1
                for word in line:lower():gmatch("%a+") do
                   f:write(word .. ' ')
@@ -142,26 +142,17 @@ function M.load(d)
 
 end
 
-function M.get()
-
-   print("\27[31mData Notes\n----------")
-   print("Note: remove prev files if settings have changed")
-   print("Note: current parser meant for prose")
-   print("Note: not all glove vectors loaded for speed purposes")
-   print("Note: minimum glove vectors used for debugging")
-   print("Note: NO SHUFFLING")
+function M.get(opts)
 
    print("\27[31mEncoder Data\n-------------")
 
-   local base_path = '/deep/group/speech/asamar/nlp/seq/'
-   local glove_path = '/deep/group/speech/asamar/nlp/glove/pretrained/glove.840B.300d.txt'
    local enc_d = {}
-   enc_d.base_path = base_path
-   enc_d.data_path =  '/deep/group/speech/asamar/nlp/data/gutenberg/txt/'
-   enc_d.file_path = enc_d.base_path .. '/exp/data/enc.txt'
-   enc_d.raw_word_path = glove_path
-   enc_d.saved_word_path = enc_d.base_path .. '/exp/data/gloveEnc.th7'
-   enc_d.saved_vocab_path = enc_d.base_path .. '/exp/data/vocabEnc.th7'
+   enc_d.base_path = opts.base_path
+   enc_d.data_path =  opts.data_dir_from .. '/enc/'
+   enc_d.file_path = opts.data_dir_to .. 'enc.txt'
+   enc_d.raw_word_path = opts.glove_path
+   enc_d.saved_word_path = opts.data_dir_to .. 'wordEnc.th7'
+   enc_d.saved_vocab_path = opts.data_dir_to .. 'vocabEnc.th7'
    enc_d.dim = 300
    enc_d.index = {}
    enc_d.rev_index = {}
@@ -181,12 +172,12 @@ function M.get()
    print("\27[31mDecoder Data\n-------------")
 
    local dec_d = {}
-   dec_d.base_path = base_path
-   dec_d.data_path =  '/deep/group/speech/asamar/nlp/data/gutenberg/txt/'
-   dec_d.file_path = dec_d.base_path .. '/exp/data/dec.txt'
-   dec_d.raw_word_path = glove_path
-   dec_d.saved_word_path = dec_d.base_path .. '/exp/data/gloveDec.th7'
-   dec_d.saved_vocab_path = dec_d.base_path .. '/exp/data/vocabDec.th7'
+   dec_d.base_path = opts.base_path
+   dec_d.data_path =  opts.data_dir_from .. '/dec/'
+   dec_d.file_path = opts.data_dir_to .. 'dec.txt'
+   dec_d.raw_word_path = opts.glove_path
+   dec_d.saved_word_path = opts.data_dir_to .. 'wordDec.th7'
+   dec_d.saved_vocab_path = opts.data_dir_to .. 'vocabDec.th7'
    dec_d.dim = 300
    dec_d.index = {}
    dec_d.rev_index = {}
@@ -211,6 +202,8 @@ function M.get()
 
    --enc_d.file_path = enc_d.file_path .. '.shuf'
    --dec_d.file_path = dec_d.file_path .. '.shuf'
+
+   --cite author
 
    return enc_d, dec_d
 end

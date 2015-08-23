@@ -258,10 +258,10 @@ end
 local function makeDirectories()
    if paths.dir(opts.run_dir) == nil then
       paths.mkdir(opts.run_dir)
-      paths.mkdir(opts.run_dir .. '/data/')
-      paths.mkdir(opts.run_dir .. '/decode/')
-      paths.mkdir(opts.run_dir .. '/model/')
-      paths.mkdir(opts.run_dir .. '/log/')
+      paths.mkdir(opts.data_dir_to)
+      paths.mkdir(opts.decode_dir)
+      paths.mkdir(opts.save_dir)
+      paths.mkdir(opts.log_dir)
    end
 end
 
@@ -398,12 +398,17 @@ local function getOpts()
    cmd:option('-decay',2)
    cmd:option('-weight_init',.1)
    cmd:option('-lr',.7)
-   cmd:option('-run_dir','./exp/')
-   cmd:option('-decode_dir','./exp/decode/')
-   cmd:option('-save_dir','./exp/model/')
-   cmd:option('-log_dir','./exp/log/')
+   cmd:option('-data_dir_from','/deep/group/speech/asamar/nlp/data/gutenberg/txt/')
+   cmd:option('-base_path','/deep/group/speech/asamar/nlp/seq/')
+   cmd:option('-glove_path','/deep/group/speech/asamar/nlp/glove/pretrained/glove.840B.300d.txt')
+   cmd:option('-run_dir','/deep/group/speech/asamar/nlp/seq/exp/')
    cmd:option('-load_model',false)
    local opts = cmd:parse(arg)
+   opts.decode_dir = opts.run_dir .. '/decode/'
+   opts.data_dir_to = opts.run_dir .. '/data/'
+   opts.save_dir = opts.run_dir .. '/model/'
+   opts.log_dir = opts.run_dir .. '/log/'
+
    return opts
 end
 
@@ -419,9 +424,8 @@ function run()
 
    -- Data
    print("Loading Data")
-   enc_data, dec_data = dataLoader.get()
+   enc_data, dec_data = dataLoader.get(opts)
    local max_iter = math.ceil(enc_data.total_lines/opts.batch_size)
-   print(max_iter)
 
    -- Network
    print("\27[31mCreating Network\n----------------")
@@ -519,7 +523,7 @@ function run()
    end         
 end
 
-   
+run()   
 
 
 
