@@ -22,7 +22,8 @@ with open(data_path + 'source/hindencorp05.plaintext') as f:
                 hindi_sent = ' '.join(sp)
 
         eng_len = len(eng_sent.split())
-        if eng_len == 0 or eng_len > 25:
+        hin_len = len(hindi_sent.split())
+        if eng_len == 0 or eng_len >= 25 or hin_len == 0 or hin_len >= 25:
             continue
         else:
             eng_f.write(eng_sent)
