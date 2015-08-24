@@ -403,6 +403,7 @@ local function getOpts()
    cmd:option('-glove_path','/deep/group/speech/asamar/nlp/glove/pretrained/glove.840B.300d.txt')
    cmd:option('-run_dir','/deep/group/speech/asamar/nlp/seq/exp/')
    cmd:option('-load_model',false)
+   cmd:option('-parser','Gut')
    local opts = cmd:parse(arg)
    opts.decode_dir = opts.run_dir .. '/decode/'
    opts.data_dir_to = opts.run_dir .. '/data/'

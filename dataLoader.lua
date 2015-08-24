@@ -43,7 +43,7 @@ function M.getWordEmbeddings(path,index,size)
    return word_emb
 end
 
-function M.parseDataset(data_path,file_path)
+function M.parseGut(data_path,file_path)
 
    local index = {}
    local rev_index = {}
@@ -93,6 +93,55 @@ function M.parseDataset(data_path,file_path)
 
 end
 
+function M.parseMT(data_path,file_path)
+
+   local index = {}
+   local rev_index = {}
+   local vocab_size = 0
+   local len_max = 0
+   local f = io.open(file_path,'w')
+   local total_lines = 0
+   for filename in io.popen('ls -a ' .. data_path):lines() do
+      if filename ~= '.' and filename ~= '..' and filename:sub(#filename,#filename) ~= '~' and filename:sub(#filename,#filename) ~= '#' then
+         print("Loading  " .. filename)
+         local data = io.open(data_path .. filename, 'r')
+         while true do
+            local line = data:read()
+            if line == nil then break end
+            local words = stringx.split(line:lower())
+            local len = words:len()
+            if (len < 25 and len > 0) then 
+               total_lines = total_lines + 1
+               for word in words do
+                  f:write(word .. ' ')
+                  if (index[word] == nil) then
+                     vocab_size = vocab_size + 1
+                     index[word] = vocab_size
+                     rev_index[vocab_size] = word
+                  end
+               end
+               if len > 0 then
+                  f:write('<EOS> \n')
+               end
+               if len > len_max then
+                  len_max = len
+               end
+            end
+         end
+         data:close()
+      end
+   end
+
+   if index['<EOS>'] == nil then
+      vocab_size = vocab_size + 1
+      index['<EOS>'] = vocab_size
+      rev_index[vocab_size] = '<EOS>'
+   end
+   len_max = len_max + 1 --account for EOS
+   f:close()
+   return index, rev_index, vocab_size, len_max, total_lines
+end
+
 function M.load(d)
 
    print("Parsing and Writing Data")
@@ -100,7 +149,13 @@ function M.load(d)
    local f = io.open(d.saved_vocab_path,'r')
    local g = io.open(d.file_path,'r')
    if f == nil or g == nil then
-      d.index, d.rev_index, d.vocab_size, d.len_max, d.total_lines = M.parseDataset(d.data_path,d.file_path)
+      if opts.parser == 'Gut' then
+         print("Using Gutenberg Parser")
+         d.index, d.rev_index, d.vocab_size, d.len_max, d.total_lines = M.parseGut(d.data_path,d.file_path)
+      else
+         print("Using MT Parser")
+         d.index, d.rev_index, d.vocab_size, d.len_max, d.total_lines = M.parseMT(d.data_path,d.file_path)
+      end
       print("Saving Vocab")
       torch.save(d.saved_vocab_path,{d.index,d.rev_index,d.vocab_size,d.len_max,d.total_lines})
    else
@@ -167,7 +222,7 @@ function M.get(opts)
    if paths.filep(enc_d.file_path) then
       os.execute("rm " .. enc_d.file_path)
    end
-   M.load(enc_d)
+   M.load(enc_d,opts)
 
    print("\27[31mDecoder Data\n-------------")
 
@@ -192,7 +247,7 @@ function M.get(opts)
    if paths.filep(dec_d.file_path .. '.shuf') then 
       os.execute("rm " .. dec_d.file_path)
    end
-   M.load(dec_d)
+   M.load(dec_d,opts)
 
    print("\27[31mPost Processing\n---------------")
    
