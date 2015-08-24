@@ -101,6 +101,7 @@ function M.parseMT(data_path,file_path)
    local len_max = 0
    local f = io.open(file_path,'w')
    local total_lines = 0
+   local old_line = '' --debugging
    for filename in io.popen('ls -a ' .. data_path):lines() do
       if filename ~= '.' and filename ~= '..' and filename:sub(#filename,#filename) ~= '~' and filename:sub(#filename,#filename) ~= '#' then
          print("Loading  " .. filename)
@@ -110,9 +111,9 @@ function M.parseMT(data_path,file_path)
             if line == nil then break end
             local words = stringx.split(line:lower())
             local len = words:len()
-            if (len < 25 and len > 0) then 
+            if (len > 0) then 
                total_lines = total_lines + 1
-               for word in words do
+               for _,word in ipairs(words) do
                   f:write(word .. ' ')
                   if (index[word] == nil) then
                      vocab_size = vocab_size + 1
@@ -126,6 +127,11 @@ function M.parseMT(data_path,file_path)
                if len > len_max then
                   len_max = len
                end
+               old_line = line
+            else
+               print(old_line) --debugging
+               print(line) --debugging
+               print(len)
             end
          end
          data:close()
