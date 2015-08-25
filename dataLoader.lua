@@ -106,7 +106,6 @@ function M.parseMT(data_path,file_path,opts)
    local len_max = 0
    local f = io.open(file_path,'w')
    local total_lines = 0
-   local old_line = '' --debugging
    for filename in io.popen('ls -a ' .. data_path):lines() do
       if filename ~= '.' and filename ~= '..' and filename:sub(#filename,#filename) ~= '~' and filename:sub(#filename,#filename) ~= '#' then
          print("Loading  " .. filename)
@@ -136,10 +135,6 @@ function M.parseMT(data_path,file_path,opts)
                   len_max = len
                end
                old_line = line
-            else
-               print(old_line) --debugging
-               print(line) --debugging
-               print(len)
             end
          end
          data:close()
@@ -181,6 +176,71 @@ function M.parseMT(data_path,file_path,opts)
    return index, rev_index, word_count, vocab_size, len_max, total_lines
 end
 
+function M.parsePenn(data_path,file_path,opts)
+
+   local index = {}
+   local word_count = {}
+   local rev_index = {}
+   local vocab_size = 0
+   local len_max = 0
+   local f = io.open(file_path,'w')
+   local total_lines = 0
+   for filename in io.popen('ls -a ' .. data_path):lines() do
+      if filename ~= '.' and filename ~= '..' and filename:sub(#filename,#filename) ~= '~' and filename:sub(#filename,#filename) ~= '#' then
+         print("Loading  " .. filename)
+         local data = io.open(data_path .. filename, 'r')
+         while true do
+            local line = data:read()
+            if line == nil then break end
+            local words = stringx.split(line:lower())
+            local len = words:len()
+            if (len > 0) then 
+               total_lines = total_lines + 1
+               for _,word in ipairs(words) do
+                  f:write(word .. ' ')
+                  if (index[word] == nil) then
+                     vocab_size = vocab_size + 1
+                     word_count[word] = 1
+                     table.insert(rev_index, word)
+                     index[word] = vocab_size
+                  else
+                     word_count[word] = word_count[word] + 1
+                  end
+               end
+               if len > 0 then
+                  f:write('<EOS>\n')
+               end
+               if len > len_max then
+                  len_max = len
+               end
+               old_line = line
+            end
+         end
+         data:close()
+      end
+   end
+
+   print("Total Lines " .. total_lines)
+   print("Original Vocab Size " .. vocab_size)
+
+   table.insert(rev_index,'<EOS>')
+   table.insert(rev_index,'<UNK>')
+   vocab_size = vocab_size + 2
+
+   print("Vocab Size with EOS and UNK Token" .. vocab_size)
+
+   for key,val in ipairs(rev_index) do
+      index[val] = key
+   end
+
+   len_max = len_max + 1 --account for EOS
+
+   print("Len Max " .. len_max)
+
+   f:close()
+   return index, rev_index, word_count, vocab_size, len_max, total_lines
+end
+
 function M.load(d,opts)
 
    print("Getting Data")
@@ -189,9 +249,14 @@ function M.load(d,opts)
       if opts.parser == 'Gut' then
          print("Using Gutenberg Parser")
          d.index, d.rev_index, d.word_count, d.vocab_size, d.len_max, d.total_lines = M.parseGut(d.data_path,d.file_path)
-      else
+      end
+      if opts.parser == 'MT' then
          print("Using MT Parser")
          d.index, d.rev_index, d.word_count, d.vocab_size, d.len_max, d.total_lines = M.parseMT(d.data_path,d.file_path,opts)
+      end
+      if opts.parser == 'penn' then
+         print("Using Penn Parser")
+         d.index, d.rev_index, d.word_count, d.vocab_size, d.len_max, d.total_lines = M.parsePenn(d.data_path,d.file_path,opts)       
       end
       print("Saving")
       torch.save(d.saved_vocab_path,{d.index,d.rev_index,d.word_count, d.vocab_size,d.len_max,d.total_lines})

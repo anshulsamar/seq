@@ -159,9 +159,9 @@ local function fp(enc_x, enc_y, dec_x, dec_y, batch, test)
    --model.dec_s[0][i] = model.enc_s[batch.enc_lengths[i]][i]
    --end
    if test then
-      local x_init = torch.ones(opts.batch_size) * dec_data.default_index
+      local x_init = transfer_data(torch.ones(opts.batch_size) * dec_data.default_index)
       dec_x = {}
-      table.insert(dec_x,transfer_data(x_init))
+      table.insert(dec_x,x_init)
    end
 
    model.dec_s[0] = model.enc_s[batch.enc_len_max]
@@ -169,9 +169,8 @@ local function fp(enc_x, enc_y, dec_x, dec_y, batch, test)
       local s = model.dec_s[i - 1]
       ret = model.decoder[i]:forward({dec_x[i], dec_y[i], s})
       if test and i < batch.dec_len_max then
-        print('testing mode')
         local _, ind = torch.max(model.output[i],2)
-        table.insert(dec_x,ind)
+        table.insert(dec_x,ind:select(2,1))
       end
       model.dec_err[i] = ret[1]
       model.dec_s[i] = ret[2]
@@ -235,37 +234,46 @@ local function getError()
    for i = 1, batch.enc_len_max do
       tot_enc_err = tot_enc_err + model.enc_err[i]
    end
-   tot_enc_err = tot_enc_err * opts.batch_size / batch.size
+   tot_enc_err = tot_enc_err / batch.size
+   --tot_enc_err = tot_enc_err * opts.batch_size / batch.size
 
    local tot_dec_err = 0
    for i = 1, batch.dec_len_max do
       tot_dec_err = tot_dec_err + model.dec_err[i]
    end
    
-   tot_dec_err = tot_dec_err * opts.batch_size / batch.size
+   tot_dec_err = tot_dec_err / batch.size
+   --tot_dec_err = tot_dec_err * opts.batch_size / batch.size
    return tot_enc_err, tot_dec_err
 end
 
 
 local function log(epoch, iter, max_iter, test)
-   stats.enc_err, stats.dec_err = getError()
-   stats.avg_enc_err = ((stats.avg_enc_err * (iter-1)) + stats.enc_err)/iter
-   stats.avg_dec_err = ((stats.avg_dec_err * (iter-1)) + stats.dec_err)/iter
+   local st 
+   if test then 
+      st = stats.test 
+   else 
+      st = stats.train 
+   end
+
+   st.enc_err, st.dec_err = getError()
+   st.avg_enc_err = ((st.avg_enc_err * (iter-1)) + st.enc_err)/iter
+   st.avg_dec_err = ((st.avg_dec_err * (iter-1)) + st.dec_err)/iter
    local runtime = "train"
    if test then runtime = "test" end
 
    print(runtime .. ': epoch=' .. string.format('%02d',epoch + opts.start) ..  
          ', iter=' .. string.format('%03d',iter) ..
-         ', enc_err=' .. string.format('%.2f',stats.enc_err) ..
-         ', avg_enc_err=' .. string.format('%.2f',stats.avg_enc_err) ..
-         ', dec_err=' .. string.format('%.2f',stats.dec_err) .. 
-         ', avg_dec_err=' .. string.format('%.2f',stats.avg_dec_err) ..
+         ', enc_err=' .. string.format('%.2f',st.enc_err) ..
+         ', avg_enc_err=' .. string.format('%.2f',st.avg_enc_err) ..
+         ', dec_err=' .. string.format('%.2f',st.dec_err) .. 
+         ', avg_dec_err=' .. string.format('%.2f',st.avg_dec_err) ..
          ', encdxNorm=' .. string.format('%.4f',model.enc_norm_dw) ..
          ', decdxNorm=' .. string.format('%.4f',model.dec_norm_dw) .. 
          ', lr=' ..  string.format('%.3f',opts.lr))
 
    if iter == max_iter then
-      table.insert(stats.avg_dec_err_epoch,stats.avg_dec_err)
+      table.insert(st.avg_dec_err_epoch,st.avg_dec_err)
    end
 end
 
@@ -302,7 +310,8 @@ function plotErr(modelFile)
       stats = oldModel[4]
    end
 
-   gnuplot.plot(torch.Tensor(stats.avg_dec_err_epoch))
+   gnuplot.plot(torch.Tensor(stats.train.avg_dec_err_epoch))
+   gnuplot.plot(torch.Tensor(stats.test.avg_dec_err_epoch))
    gnuplot.title('Average Decoder Error vs Epochs')
    gnuplot.xlabel('Epoch')
    gnuplot.ylabel('Negative Log Likelihood')
@@ -347,6 +356,7 @@ local function loadMat(encLine,decLine,i)
          enc_num_word = enc_num_word + 1
          if enc_data.index[enc_word] == nil then
             enc_word = '<UNK>'
+            print(enc_word)
          end
          enc_x[enc_num_word + offset][i] = enc_data.index[enc_word]
          last_word = enc_word
@@ -413,7 +423,7 @@ local function getOpts()
    cmd:option('-gpu',1)
    cmd:option('-in_size',300)
    cmd:option('-rnn_size',300)
-   cmd:option('-batch_size',64)
+   cmd:option('-batch_size',32)
    cmd:option('-max_grad_norm',5)
    cmd:option('-max_epoch',10)
    cmd:option('-start',0)
@@ -466,17 +476,22 @@ function run()
    -- Training
    print("\27[31mTraining\n----------")
    stats = {}
-   stats.avg_dec_err_epoch = {}
+   stats.train = {avg_dec_err_epoch = {}}
+   stats.test = {avg_dec_err_epoch = {}}
 
    for epoch=1,(opts.max_epoch - opts.start) do
 
       -- Setup
       local iter = 0
 
-      stats.avg_enc_err = 0
-      stats.avg_dec_err = 0
-      stats.dec_err = 0
-      stats.enc_err = 0
+      stats.train.avg_enc_err = 0
+      stats.train.avg_dec_err = 0
+      stats.train.dec_err = 0
+      stats.train.enc_err = 0
+      stats.test.avg_enc_err = 0
+      stats.test.avg_dec_err = 0
+      stats.test.dec_err = 0
+      stats.test.enc_err = 0
 
       -- Anneal
       if opts.anneal and (epoch + opts.start) > opts.anneal_after then
