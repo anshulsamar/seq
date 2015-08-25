@@ -145,7 +145,7 @@ local function reset_ds()
    end
 end
 
-local function fp(enc_x, enc_y, dec_x, dec_y, batch)
+local function fp(enc_x, enc_y, dec_x, dec_y, batch, test)
    reset_s()
    local ret
    for i = 1, batch.enc_len_max do
@@ -158,18 +158,31 @@ local function fp(enc_x, enc_y, dec_x, dec_y, batch)
    --for i = 1, batch.size do
    --model.dec_s[0][i] = model.enc_s[batch.enc_lengths[i]][i]
    --end
+   if test then
+      local x_init = torch.ones(opts.batch_size) * dec_data.default_index
+      dec_x = {}
+      table.insert(dec_x,transfer_data(x_init))
+   end
 
    model.dec_s[0] = model.enc_s[batch.enc_len_max]
    for i = 1, batch.dec_len_max do
       local s = model.dec_s[i - 1]
       ret = model.decoder[i]:forward({dec_x[i], dec_y[i], s})
+      if test and i < batch.dec_len_max then
+        print('testing mode')
+        local _, ind = torch.max(model.output[i],2)
+        table.insert(dec_x,ind)
+      end
       model.dec_err[i] = ret[1]
       model.dec_s[i] = ret[2]
    end
 
 end
 
-local function bp(enc_x,enc_y,dec_x,dec_y, batch)
+local function bp(enc_x,enc_y,dec_x,dec_y,batch,test)
+
+   if test then return end
+
    params.encoderdx:zero()
    params.decoderdx:zero()
    reset_ds()
@@ -234,11 +247,14 @@ local function getError()
 end
 
 
-local function log(epoch, iter, max_iter)
+local function log(epoch, iter, max_iter, test)
    stats.enc_err, stats.dec_err = getError()
    stats.avg_enc_err = ((stats.avg_enc_err * (iter-1)) + stats.enc_err)/iter
    stats.avg_dec_err = ((stats.avg_dec_err * (iter-1)) + stats.dec_err)/iter
-   print('epoch=' .. string.format('%02d',epoch + opts.start) ..  
+   local runtime = "train"
+   if test then runtime = "test" end
+
+   print(runtime .. ': epoch=' .. string.format('%02d',epoch + opts.start) ..  
          ', iter=' .. string.format('%03d',iter) ..
          ', enc_err=' .. string.format('%.2f',stats.enc_err) ..
          ', avg_enc_err=' .. string.format('%.2f',stats.avg_enc_err) ..
@@ -248,8 +264,6 @@ local function log(epoch, iter, max_iter)
          ', decdxNorm=' .. string.format('%.4f',model.dec_norm_dw) .. 
          ', lr=' ..  string.format('%.3f',opts.lr))
 
-
-   local logName = opts.log_dir .. 'log.txt'
    if iter == max_iter then
       table.insert(stats.avg_dec_err_epoch,stats.avg_dec_err)
    end
@@ -331,6 +345,9 @@ local function loadMat(encLine,decLine,i)
    for _,enc_word in ipairs(stringx.split(encLine,' ')) do
       if enc_word ~= "" and enc_num_word < enc_data.len_max  then
          enc_num_word = enc_num_word + 1
+         if enc_data.index[enc_word] == nil then
+            enc_word = '<UNK>'
+         end
          enc_x[enc_num_word + offset][i] = enc_data.index[enc_word]
          last_word = enc_word
       end
@@ -345,6 +362,9 @@ local function loadMat(encLine,decLine,i)
    for _,dec_word in ipairs(stringx.split(decLine,' ')) do
       if dec_word ~= "" and dec_num_word < dec_data.len_max then
          dec_num_word = dec_num_word + 1
+         if dec_data.index[dec_word] == nil then
+            dec_word = '<UNK>'
+         end
          dec_y[dec_num_word][i] = dec_data.index[dec_word]
          indexes[dec_num_word] = {dec_data.index[dec_word],dec_word}
       end
@@ -359,7 +379,7 @@ local function loadMat(encLine,decLine,i)
    return enc_num_word, dec_num_word
 end
 
-local function decode(epoch,iter,batch,dec_line)
+local function decode(epoch,iter,batch,dec_line,test)
 
    local indexes = {}
    for i=1,#model.output do
@@ -367,7 +387,10 @@ local function decode(epoch,iter,batch,dec_line)
       table.insert(indexes,ind)
    end
 
-   local decodeName = 'decode_' .. epoch .. '_' .. iter .. '.txt'
+   local runtime = "train"
+   if test then runtime = "test" end
+
+   local decodeName = 'decode_' .. runtime .. '_' .. epoch .. '_' .. iter .. '.txt'
    local f = io.open(opts.decode_dir .. decodeName,'a+')
 
    for i=1,#dec_line do
@@ -387,6 +410,7 @@ end
 local function getOpts()
    local cmd = torch.CmdLine()
    cmd:option('-layers',2)
+   cmd:option('-gpu',1)
    cmd:option('-in_size',300)
    cmd:option('-rnn_size',300)
    cmd:option('-batch_size',64)
@@ -398,12 +422,15 @@ local function getOpts()
    cmd:option('-decay',2)
    cmd:option('-weight_init',.1)
    cmd:option('-lr',.7)
-   cmd:option('-data_dir_from','/deep/group/speech/asamar/nlp/data/gutenberg/txt/')
+   cmd:option('-freq_floor',6)
+   cmd:option('-data_dir_from','/deep/group/speech/asamar/nlp/data/test/txt2/')
    cmd:option('-base_path','/deep/group/speech/asamar/nlp/seq/')
+   cmd:option('-glove',false)
    cmd:option('-glove_path','/deep/group/speech/asamar/nlp/glove/pretrained/glove.840B.300d.txt')
    cmd:option('-run_dir','/deep/group/speech/asamar/nlp/seq/exp/')
    cmd:option('-load_model',false)
    cmd:option('-parser','Gut')
+   cmd:option('-test',false)
    local opts = cmd:parse(arg)
    opts.decode_dir = opts.run_dir .. '/decode/'
    opts.data_dir_to = opts.run_dir .. '/data/'
@@ -416,8 +443,8 @@ end
 function run()
    -- Options
    print("\27[31mStarting Experiment\n---------------")
-   g_init_gpu({1})
    opts = getOpts()
+   g_init_gpu({opts.gpu})
    makeDirectories()
    print(opts)
    print("Saving Options")
@@ -504,10 +531,10 @@ function run()
 
          -- Forward and Backward Prop
          -- print(enc_line[1])
-         fp(enc_x,enc_y,dec_x,dec_y,batch)
-         bp(enc_x,enc_y,dec_x,dec_y,batch)
-         log(epoch, iter, max_iter)
-         decode(epoch,iter,batch,dec_line)
+         fp(enc_x,enc_y,dec_x,dec_y,batch,opts.test)
+         bp(enc_x,enc_y,dec_x,dec_y,batch,opts.test)
+         log(epoch, iter, max_iter,opts.test)
+         decode(epoch,iter,batch,dec_line,opts.test)
          if batch.size ~= opts.batch_size then
             break
          end
