@@ -199,6 +199,18 @@ local function bp(enc_x,enc_y,dec_x,dec_y,batch,test)
    g_replace_table(model.enc_ds,model.dec_ds)
 
    for i = 0, batch.enc_len_max-1 do
+      print('i: ' .. i)
+      for j = 1, batch.size do
+         if batch.enc_line_length[j] == i then
+            print('line' .. j)
+            print(model.enc_ds[1][j])
+            for d = 1, 2 * opts.layers do
+               model.enc_ds[d][j]:zero()
+            end
+            print(model.enc_ds[1][j])
+         end
+      end
+
       local new_i = batch.enc_len_max - i
       local s = model.enc_s[new_i-1]
       local derr = transfer_data(torch.ones(1))
@@ -209,7 +221,8 @@ local function bp(enc_x,enc_y,dec_x,dec_y,batch,test)
       g_replace_table(model.enc_ds, tmp)
       cutorch.synchronize()
    end
-
+   print(params.encoderdx:sum())
+   print(params.decoderdx:sum())
 
    model.enc_norm_dw = params.encoderdx:norm()
 
@@ -226,23 +239,23 @@ local function bp(enc_x,enc_y,dec_x,dec_y,batch,test)
       params.decoderdx:mul(shrink_factor)
    end
    params.decoderx:add(params.decoderdx:mul(-opts.lr))
+
+
 end
 
 
 local function getError()
    local tot_enc_err = 0
+
    for i = 1, batch.enc_len_max do
       tot_enc_err = tot_enc_err + model.enc_err[i]
    end
-   tot_enc_err = tot_enc_err / batch.size
    --tot_enc_err = tot_enc_err * opts.batch_size / batch.size
 
    local tot_dec_err = 0
    for i = 1, batch.dec_len_max do
       tot_dec_err = tot_dec_err + model.dec_err[i]
    end
-   
-   tot_dec_err = tot_dec_err / batch.size
    --tot_dec_err = tot_dec_err * opts.batch_size / batch.size
    return tot_enc_err, tot_dec_err
 end
@@ -531,6 +544,8 @@ function run()
          batch.enc_len_max = 0
          batch.dec_len_max = 0
          batch.dec_line_length = {}
+         batch.enc_line_length = {}
+         print(enc_line)
          for i=1,#enc_line do
             if enc_line[i] ~= nil then
                enc_num_word, dec_num_word = loadMat(enc_line[i],dec_line[i],i)
@@ -541,6 +556,7 @@ function run()
                   batch.dec_len_max = dec_num_word
                end
                batch.dec_line_length[i] = dec_num_word
+               batch.enc_line_length[i] = enc_num_word
             end
          end
 
