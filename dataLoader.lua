@@ -319,7 +319,7 @@ function M.get(opts)
    enc_d.saved_word_path = opts.data_dir_to .. 'wordEnc.th7'
    enc_d.saved_vocab_path = opts.data_dir_to .. 'vocabEnc.th7'
    enc_d.saved_lookup_path = opts.data_dir_to .. 'lookupEnc.th7'
-   enc_d.dim = 300
+   enc_d.dim = opts.in_size
    enc_d.index = {}
    enc_d.rev_index = {}
    enc_d.word_emb = {}
@@ -343,7 +343,7 @@ function M.get(opts)
    dec_d.saved_word_path = opts.data_dir_to .. 'wordDec.th7'
    dec_d.saved_vocab_path = opts.data_dir_to .. 'vocabDec.th7'
    dec_d.saved_lookup_path = opts.data_dir_to .. 'lookupDec.th7'
-   dec_d.dim = 300
+   dec_d.dim = opts.in_size
    dec_d.index = {}
    dec_d.rev_index = {}
    dec_d.word_emb = {}

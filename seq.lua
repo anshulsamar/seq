@@ -153,11 +153,16 @@ local function fp(enc_x, enc_y, dec_x, dec_y, batch, test)
       ret = model.encoder[i]:forward({enc_x[i], enc_y[i], s})
       model.enc_err[i] = ret[1]
       model.enc_s[i] = ret[2]
+      for j = 1, batch.size do
+         if batch.enc_line_length[j] == batch.enc_len_max - i then
+            print('enc zero at ' .. i)
+            for d = 1, 2 * opts.layers do
+               model.enc_s[i][d][j]:zero()
+            end
+         end
+      end
    end
 
-   --for i = 1, batch.size do
-   --model.dec_s[0][i] = model.enc_s[batch.enc_lengths[i]][i]
-   --end
    if test then
       local x_init = transfer_data(torch.ones(opts.batch_size) * dec_data.default_index)
       dec_x = {}
@@ -165,6 +170,7 @@ local function fp(enc_x, enc_y, dec_x, dec_y, batch, test)
    end
 
    model.dec_s[0] = model.enc_s[batch.enc_len_max]
+
    for i = 1, batch.dec_len_max do
       local s = model.dec_s[i - 1]
       ret = model.decoder[i]:forward({dec_x[i], dec_y[i], s})
@@ -174,6 +180,14 @@ local function fp(enc_x, enc_y, dec_x, dec_y, batch, test)
       end
       model.dec_err[i] = ret[1]
       model.dec_s[i] = ret[2]
+      for j = 1, batch.size do
+         if batch.dec_line_length[j] == i then
+            print('dec zero at ' .. i)
+            for d = 1, 2 * opts.layers do
+               model.dec_s[i][d][j]:zero()
+            end
+         end
+      end
    end
 
 end
@@ -198,16 +212,14 @@ local function bp(enc_x,enc_y,dec_x,dec_y,batch,test)
 
    g_replace_table(model.enc_ds,model.dec_ds)
 
+   print(model.enc_ds)
+
    for i = 0, batch.enc_len_max-1 do
-      print('i: ' .. i)
       for j = 1, batch.size do
          if batch.enc_line_length[j] == i then
-            print('line' .. j)
-            print(model.enc_ds[1][j])
             for d = 1, 2 * opts.layers do
                model.enc_ds[d][j]:zero()
             end
-            print(model.enc_ds[1][j])
          end
       end
 
@@ -221,6 +233,7 @@ local function bp(enc_x,enc_y,dec_x,dec_y,batch,test)
       g_replace_table(model.enc_ds, tmp)
       cutorch.synchronize()
    end
+
    print(params.encoderdx:sum())
    print(params.decoderdx:sum())
 
@@ -434,8 +447,8 @@ local function getOpts()
    local cmd = torch.CmdLine()
    cmd:option('-layers',2)
    cmd:option('-gpu',1)
-   cmd:option('-in_size',300)
-   cmd:option('-rnn_size',300)
+   cmd:option('-in_size',3)
+   cmd:option('-rnn_size',3)
    cmd:option('-batch_size',32)
    cmd:option('-max_grad_norm',5)
    cmd:option('-max_epoch',10)
