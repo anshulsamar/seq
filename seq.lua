@@ -1,7 +1,7 @@
 -- Copyright (c) 2015 Anshul Samar
 -- Copyright (c) 2014, Facebook, Inc. All rights reserved.
 -- Licensed under the Apache License, Version 2.0
--- See original code: github.com/wojzaremba/lstm
+-- See original LSTM/LM code: github.com/wojzaremba/lstm
 
 require 'io'
 require 'torch'
@@ -155,7 +155,6 @@ local function fp(enc_x, enc_y, dec_x, dec_y, batch, test)
       model.enc_s[i] = ret[2]
       for j = 1, batch.size do
          if batch.enc_line_length[j] == batch.enc_len_max - i then
-            print('enc zero at ' .. i)
             for d = 1, 2 * opts.layers do
                model.enc_s[i][d][j]:zero()
             end
@@ -182,7 +181,6 @@ local function fp(enc_x, enc_y, dec_x, dec_y, batch, test)
       model.dec_s[i] = ret[2]
       for j = 1, batch.size do
          if batch.dec_line_length[j] == i then
-            print('dec zero at ' .. i)
             for d = 1, 2 * opts.layers do
                model.dec_s[i][d][j]:zero()
             end
@@ -212,8 +210,6 @@ local function bp(enc_x,enc_y,dec_x,dec_y,batch,test)
 
    g_replace_table(model.enc_ds,model.dec_ds)
 
-   print(model.enc_ds)
-
    for i = 0, batch.enc_len_max-1 do
       for j = 1, batch.size do
          if batch.enc_line_length[j] == i then
@@ -233,9 +229,6 @@ local function bp(enc_x,enc_y,dec_x,dec_y,batch,test)
       g_replace_table(model.enc_ds, tmp)
       cutorch.synchronize()
    end
-
-   print(params.encoderdx:sum())
-   print(params.decoderdx:sum())
 
    model.enc_norm_dw = params.encoderdx:norm()
 
@@ -306,18 +299,15 @@ end
 local function makeDirectories()
    if paths.dir(opts.run_dir) == nil then
       paths.mkdir(opts.run_dir)
-      paths.mkdir(opts.data_dir_to)
       paths.mkdir(opts.decode_dir)
-      paths.mkdir(opts.save_dir)
-      paths.mkdir(opts.log_dir)
    end
 end
 
 local function loadModel()
-   filen = opts.save_dir .. '/model.th7'
+   filen = opts.run_dir .. '/model.th7'
    if (paths.filep(filen)) then
       print("Loading previous parameters")
-      local oldModel = torch.load(opts.save_dir .. '/model.th7')
+      local oldModel = torch.load(opts.run_dir .. '/model.th7')
       params.encoderx:copy(oldModel[1].encoderx)
       params.encoderdx:copy(oldModel[1].encoderdx)
       params.decoderx:copy(oldModel[1].decoderx)
@@ -381,7 +371,7 @@ local function loadMat(encLine,decLine,i)
       if enc_word ~= "" and enc_num_word < enc_data.len_max  then
          enc_num_word = enc_num_word + 1
          if enc_data.index[enc_word] == nil then
-            enc_word = '<UNK>'
+            enc_word = '<unk>'
             print(enc_word)
          end
          enc_x[enc_num_word + offset][i] = enc_data.index[enc_word]
@@ -399,7 +389,7 @@ local function loadMat(encLine,decLine,i)
       if dec_word ~= "" and dec_num_word < dec_data.len_max then
          dec_num_word = dec_num_word + 1
          if dec_data.index[dec_word] == nil then
-            dec_word = '<UNK>'
+            dec_word = '<unk>'
          end
          dec_y[dec_num_word][i] = dec_data.index[dec_word]
          indexes[dec_num_word] = {dec_data.index[dec_word],dec_word}
@@ -447,9 +437,9 @@ local function getOpts()
    local cmd = torch.CmdLine()
    cmd:option('-layers',2)
    cmd:option('-gpu',1)
-   cmd:option('-in_size',3)
-   cmd:option('-rnn_size',3)
-   cmd:option('-batch_size',32)
+   cmd:option('-in_size',300)
+   cmd:option('-rnn_size',300)
+   cmd:option('-batch_size',96)
    cmd:option('-max_grad_norm',5)
    cmd:option('-max_epoch',10)
    cmd:option('-start',0)
@@ -459,20 +449,23 @@ local function getOpts()
    cmd:option('-weight_init',.1)
    cmd:option('-lr',.7)
    cmd:option('-freq_floor',6)
-   cmd:option('-data_dir_from','/deep/group/speech/asamar/nlp/data/test/txt2/')
-   cmd:option('-base_path','/deep/group/speech/asamar/nlp/seq/')
+   cmd:option('-data_dir','/deep/group/speech/asamar/nlp/data/pennMod/')
+   cmd:option('-enc_train_file','enc_train.txt')
+   cmd:option('-dec_train_file','dec_train.txt')
+   cmd:option('-enc_test_file','enc_test.txt')
+   cmd:option('-dec_test_file','dec_test.txt')
    cmd:option('-glove',false)
-   cmd:option('-glove_path','/deep/group/speech/asamar/nlp/glove/pretrained/glove.840B.300d.txt')
-   cmd:option('-run_dir','/deep/group/speech/asamar/nlp/seq/exp/')
+   cmd:option('-glove_file','/deep/group/speech/asamar/nlp/glove/pretrained/glove.840B.300d.txt')
+   cmd:option('-run_dir','/deep/group/speech/asamar/nlp/seq/penn/')
    cmd:option('-load_model',false)
-   cmd:option('-parser','Gut')
+   cmd:option('-parser','penn')
    cmd:option('-test',false)
    local opts = cmd:parse(arg)
    opts.decode_dir = opts.run_dir .. '/decode/'
-   opts.data_dir_to = opts.run_dir .. '/data/'
-   opts.save_dir = opts.run_dir .. '/model/'
-   opts.log_dir = opts.run_dir .. '/log/'
-
+   opts.enc_train_file = opts.data_dir + opts.enc_train_file
+   opts.dec_train_file = opts.data_dir + opts.dec_train_file
+   opts.enc_test_file = opts.data_dir + opts.enc_test_file
+   opts.dec_test_file = opts.data_dir + opts.dec_test_file
    return opts
 end
 
@@ -509,7 +502,6 @@ function run()
 
       -- Setup
       local iter = 0
-
       stats.train.avg_enc_err = 0
       stats.train.avg_dec_err = 0
       stats.train.dec_err = 0
@@ -525,8 +517,13 @@ function run()
       end
 
       -- Open Data
-      local enc_f = io.open(enc_data.file_path,'r')
-      local dec_f = io.open(dec_data.file_path,'r')
+      if opts.test then
+         local enc_f = io.open(enc_data.file_path_test,'r')
+         local dec_f = io.open(dec_data.file_path_test,'r')
+      else
+         local enc_f = io.open(enc_data.file_path,'r')
+         local dec_f = io.open(dec_data.file_path,'r')
+      end
     
       while true do
 
@@ -558,7 +555,7 @@ function run()
          batch.dec_len_max = 0
          batch.dec_line_length = {}
          batch.enc_line_length = {}
-         print(enc_line)
+
          for i=1,#enc_line do
             if enc_line[i] ~= nil then
                enc_num_word, dec_num_word = loadMat(enc_line[i],dec_line[i],i)
@@ -574,7 +571,7 @@ function run()
          end
 
          -- Forward and Backward Prop
-         -- print(enc_line[1])
+
          fp(enc_x,enc_y,dec_x,dec_y,batch,opts.test)
          bp(enc_x,enc_y,dec_x,dec_y,batch,opts.test)
          log(epoch, iter, max_iter,opts.test)
@@ -582,15 +579,13 @@ function run()
          if batch.size ~= opts.batch_size then
             break
          end
-
-         --os.execute("nvidia-smi")
       end
 
       enc_f:close()
       dec_f:close()
 
       -- Saving
-      torch.save(opts.save_dir .. '/model.th7', 
+      torch.save(opts.run_dir .. '/model.th7', 
                  {params, epoch + opts.start, opts.lr, stats})
    end         
 end
