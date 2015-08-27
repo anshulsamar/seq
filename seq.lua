@@ -267,7 +267,7 @@ local function getError()
 end
 
 
-local function log(epoch, iter, max_iter, test)
+local function log(epoch, iter, test)
    local st 
    if test then 
       st = stats.test 
@@ -291,9 +291,7 @@ local function log(epoch, iter, max_iter, test)
          ', decdxNorm=' .. string.format('%.4f',model.dec_norm_dw) .. 
          ', lr=' ..  string.format('%.3f',opts.lr))
 
-   if iter == max_iter then
-      table.insert(st.avg_dec_err_epoch,st.avg_dec_err)
-   end
+   st.avg_dec_err_epoch[epoch] = st.avg_dec_err
 
 end
 
@@ -409,7 +407,7 @@ local function loadMat(encLine,decLine,i)
    return enc_num_word, dec_num_word
 end
 
-local function decode(epoch,iter,batch,dec_line,test)
+local function decode(epoch,iter,batch,enc_line,dec_line,test)
 
    local indexes = {}
    for i=1,#model.output do
@@ -429,7 +427,7 @@ local function decode(epoch,iter,batch,dec_line,test)
       for j=1,num_words do
          sentence = sentence .. dec_data.rev_index[indexes[j][i][1]] .. ' '
       end
-      f:write(sentence,'\n')
+      f:write(enc_line[i] .. ' | ' .. sentence,'\n')
       f:flush()
    end
 
@@ -445,15 +443,15 @@ local function getOpts()
    cmd:option('-rnn_size',300)
    cmd:option('-batch_size',96)
    cmd:option('-max_grad_norm',5)
-   cmd:option('-max_epoch',10)
+   cmd:option('-max_epoch',25)
    cmd:option('-start',0)
-   cmd:option('-anneal',false)
-   cmd:option('-anneal_after',4)
+   cmd:option('-anneal',true)
+   cmd:option('-anneal_after',10)
    cmd:option('-decay',2)
    cmd:option('-weight_init',.1)
-   cmd:option('-lr',.7)
+   cmd:option('-lr',1)
    cmd:option('-freq_floor',6)
-   cmd:option('-data_dir','/deep/group/speech/asamar/nlp/data/pennShuf/')
+   cmd:option('-data_dir','/deep/group/speech/asamar/nlp/data/pennNormal/')
    cmd:option('-enc_train_file','enc_train.txt')
    cmd:option('-dec_train_file','dec_train.txt')
    cmd:option('-enc_test_file','enc_test.txt')
@@ -492,7 +490,6 @@ function run()
    -- Data
    print("Loading Data")
    enc_data, dec_data = dataLoader.get(opts)
-   local max_iter = math.ceil(enc_data.total_lines/opts.batch_size)
 
    -- Network
    print("\27[31mCreating Network\n----------------")
@@ -539,6 +536,8 @@ function run()
             enc_f = io.open(enc_data.train_file,'r')
             dec_f = io.open(dec_data.train_file,'r')
          end
+         
+         --local max_iter = math.ceil(enc_data.total_lines/opts.batch_size)
          
          while true do
 
@@ -589,8 +588,8 @@ function run()
 
             fp(enc_x,enc_y,dec_x,dec_y,batch,test)
             bp(enc_x,enc_y,dec_x,dec_y,batch,test)
-            log(epoch, iter, max_iter,test)
-            decode(epoch,iter,batch,dec_line,test)
+            log(epoch,iter,test)
+            decode(epoch,iter,batch,enc_line,dec_line,test)
             if batch.size ~= opts.batch_size then
                break
             end
