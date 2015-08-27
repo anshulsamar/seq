@@ -294,6 +294,7 @@ local function log(epoch, iter, max_iter, test)
    if iter == max_iter then
       table.insert(st.avg_dec_err_epoch,st.avg_dec_err)
    end
+
 end
 
 local function makeDirectories()
@@ -325,9 +326,12 @@ function plotErr(modelFile)
       local oldModel = torch.load(modelFile)
       stats = oldModel[4]
    end
-
-   gnuplot.plot(torch.Tensor(stats.train.avg_dec_err_epoch))
-   gnuplot.plot(torch.Tensor(stats.test.avg_dec_err_epoch))
+   print('Train Avg Dec Err')
+   print(stats.train.avg_dec_err_epoch)
+   print('Test Avg Dec Err')
+   print(stats.test.avg_dec_err_epoch)
+   gnuplot.plot({torch.Tensor(stats.train.avg_dec_err_epoch)},
+                {torch.Tensor(stats.test.avg_dec_err_epoch)})
    gnuplot.title('Average Decoder Error vs Epochs')
    gnuplot.xlabel('Epoch')
    gnuplot.ylabel('Negative Log Likelihood')
@@ -460,6 +464,7 @@ local function getOpts()
    cmd:option('-load_model',false)
    cmd:option('-parser','penn')
    cmd:option('-test',true)
+   cmd:option('-stats',false)
    local opts = cmd:parse(arg)
    opts.decode_dir = opts.run_dir .. '/decode/'
    opts.enc_train_file = opts.data_dir .. opts.enc_train_file
@@ -478,6 +483,11 @@ function run()
    print(opts)
    print("Saving Options")
    torch.save(paths.concat(opts.run_dir,'opts.th7'),opts)
+
+   if opts.stats then
+      plotErr(opts.run_dir .. 'model.th7')
+      return
+   end
 
    -- Data
    print("Loading Data")
@@ -498,100 +508,102 @@ function run()
    stats.train = {avg_dec_err_epoch = {}}
    stats.test = {avg_dec_err_epoch = {}}
 
+   local bool = {false, true}
    for epoch=1,(opts.max_epoch - opts.start) do
+      for _,test in ipairs(bool) do
+         -- Setup
+         local iter = 0
+         stats.train.avg_enc_err = 0
+         stats.train.avg_dec_err = 0
+         stats.train.dec_err = 0
+         stats.train.enc_err = 0
+         stats.test.avg_enc_err = 0
+         stats.test.avg_dec_err = 0
+         stats.test.dec_err = 0
+         stats.test.enc_err = 0
 
-      -- Setup
-      local iter = 0
-      stats.train.avg_enc_err = 0
-      stats.train.avg_dec_err = 0
-      stats.train.dec_err = 0
-      stats.train.enc_err = 0
-      stats.test.avg_enc_err = 0
-      stats.test.avg_dec_err = 0
-      stats.test.dec_err = 0
-      stats.test.enc_err = 0
-
-      -- Anneal
-      if opts.anneal and (epoch + opts.start) > opts.anneal_after then
-         opts.lr = opts.lr / opts.decay
-      end
-
-      -- Open Data
-
-      local enc_f
-      local dec_f
-
-      if opts.test then
-         enc_f = io.open(enc_data.test_file,'r')
-         dec_f = io.open(dec_data.test_file,'r')
-      else
-         enc_f = io.open(enc_data.train_file,'r')
-         dec_f = io.open(dec_data.train_file,'r')
-      end
-    
-      while true do
-
-         -- Read in Batch Size
-         iter = iter + 1
-         model.output = {}
-         local enc_line = {}
-         local dec_line = {}
-         while #enc_line < opts.batch_size do
-            local tmp = enc_f:read("*l")
-            table.insert(enc_line,tmp)
-            tmp = dec_f:read("*l")
-            table.insert(dec_line,tmp)
-            if (tmp == nil) then break end
+         -- Anneal
+         if opts.anneal and (epoch + opts.start) > opts.anneal_after then
+            opts.lr = opts.lr / opts.decay
          end
 
-         if #enc_line == 0 then break end
+         -- Open Data
 
-         -- Initialize Matrices
-         enc_x, enc_y, dec_x, dec_y, batch = {}, {}, {}, {}, {}
-         initializeBatch(#enc_line)
-         initializeEncMat()
-         initializeDecMat()
+         local enc_f
+         local dec_f
 
-         collectgarbage()
+         if test then
+            enc_f = io.open(enc_data.test_file,'r')
+            dec_f = io.open(dec_data.test_file,'r')
+         else
+            enc_f = io.open(enc_data.train_file,'r')
+            dec_f = io.open(dec_data.train_file,'r')
+         end
+         
+         while true do
 
-         -- Load Matrices
-         batch.enc_len_max = 0
-         batch.dec_len_max = 0
-         batch.dec_line_length = {}
-         batch.enc_line_length = {}
+            -- Read in Batch Size
+            iter = iter + 1
+            model.output = {}
+            local enc_line = {}
+            local dec_line = {}
+            while #enc_line < opts.batch_size do
+               local tmp = enc_f:read("*l")
+               table.insert(enc_line,tmp)
+               tmp = dec_f:read("*l")
+               table.insert(dec_line,tmp)
+               if (tmp == nil) then break end
+            end
 
-         for i=1,#enc_line do
-            if enc_line[i] ~= nil then
-               enc_num_word, dec_num_word = loadMat(enc_line[i],dec_line[i],i)
-               if enc_num_word > batch.enc_len_max then
-                  batch.enc_len_max = enc_num_word
+            if #enc_line == 0 then break end
+
+            -- Initialize Matrices
+            enc_x, enc_y, dec_x, dec_y, batch = {}, {}, {}, {}, {}
+            initializeBatch(#enc_line)
+            initializeEncMat()
+            initializeDecMat()
+
+            collectgarbage()
+
+            -- Load Matrices
+            batch.enc_len_max = 0
+            batch.dec_len_max = 0
+            batch.dec_line_length = {}
+            batch.enc_line_length = {}
+
+            for i=1,#enc_line do
+               if enc_line[i] ~= nil then
+                  enc_num_word, dec_num_word = loadMat(enc_line[i],dec_line[i],i)
+                  if enc_num_word > batch.enc_len_max then
+                     batch.enc_len_max = enc_num_word
+                  end
+                  if dec_num_word > batch.dec_len_max then
+                     batch.dec_len_max = dec_num_word
+                  end
+                  batch.dec_line_length[i] = dec_num_word
+                  batch.enc_line_length[i] = enc_num_word
                end
-               if dec_num_word > batch.dec_len_max then
-                  batch.dec_len_max = dec_num_word
-               end
-               batch.dec_line_length[i] = dec_num_word
-               batch.enc_line_length[i] = enc_num_word
+            end
+
+            -- Forward and Backward Prop
+
+            fp(enc_x,enc_y,dec_x,dec_y,batch,test)
+            bp(enc_x,enc_y,dec_x,dec_y,batch,test)
+            log(epoch, iter, max_iter,test)
+            decode(epoch,iter,batch,dec_line,test)
+            if batch.size ~= opts.batch_size then
+               break
             end
          end
 
-         -- Forward and Backward Prop
+         enc_f:close()
+         dec_f:close()
 
-         fp(enc_x,enc_y,dec_x,dec_y,batch,opts.test)
-         bp(enc_x,enc_y,dec_x,dec_y,batch,opts.test)
-         log(epoch, iter, max_iter,opts.test)
-         decode(epoch,iter,batch,dec_line,opts.test)
-         if batch.size ~= opts.batch_size then
-            break
-         end
-      end
-
-      enc_f:close()
-      dec_f:close()
-
-      -- Saving
-      torch.save(opts.run_dir .. '/model.th7', 
-                 {params, epoch + opts.start, opts.lr, stats})
-   end         
+         -- Saving
+         torch.save(opts.run_dir .. '/model.th7', 
+                    {params, epoch + opts.start, opts.lr, stats})
+      end         
+   end
 end
 
 run()   
