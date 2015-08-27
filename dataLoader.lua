@@ -96,37 +96,44 @@ end
 function M.load(d,opts)
 
    if paths.filep(d.saved_vocab_file) == false then
-      d.index, d.rev_index, d.word_count, d.vocab_size, d.len_max, d.total_lines = M.parsePenn(d.data_path,d.file_path,opts)       
+      d.index, d.rev_index, d.word_count, 
+      d.vocab_size, d.len_max, d.total_lines = 
+         M.parse(d.train_file,opts)       
       print("Saving")
-      torch.save(d.saved_vocab_file,{d.index,d.rev_index,d.word_count, d.vocab_size,d.len_max,d.total_lines})
+      torch.save(d.saved_vocab_file,
+                 {d.index,d.rev_index,d.word_count, d.vocab_size,
+                  d.len_max,d.total_lines})
    else
       print("Loading Saved Data")
-      d.index, d.rev_index, d.word_count, d.vocab_size, d.len_max, d.total_lines = unpack(torch.load(d.saved_vocab_file))
+      d.index, d.rev_index, d.word_count, 
+      d.vocab_size, d.len_max, d.total_lines = 
+         unpack(torch.load(d.saved_vocab_file))
    end
 
-   if opts.glove == true and paths.filep(d.saved_glove_file) == false then
-      d.glove_vecs = {}
-      if opts.glove then 
-         print("Getting Glove Vecs")
-         -- Subtracting 1 from vocab_size because it includes <EOM> and <UNK>
-         d.glove_vecs = M.getGlove(d.glove_file,d.index,d.vocab_size-2)
+   if opts.glove then
+      if paths.filep(d.saved_glove_file) == false then
+         d.glove_vecs = {}
+         if opts.glove then 
+            print("Getting Glove Vecs")
+         -- Subtracting 2 from vocabsize due to <EOS> and <unk>
+            d.glove_vecs = M.getGlove(d.glove_file,d.index,d.vocab_size-2)
+         end
+         print("Saving Glove Vecs")
+         torch.save(d.saved_glove_file,d.glove_vecs)
+      else
+         print("Loading Glove Vecs")
+         d.glove_vecs = torch.load(d.saved_glove_file)
       end
-      print("Saving Glove Vecs")
-      torch.save(d.saved_glove_file,d.glove_vecs)
-   else
-      print("Loading Glove Vecs")
-      d.glove_vecs = torch.load(d.saved_glove_file)
    end
 
    if paths.filep(d.saved_lookup_file) == false then
 
       print("Generating Lookup")
 
-      d.default_index = d.vocab_size + 1 -- for the default lookup of zeros
+      d.default_index = d.vocab_size + 1 -- for the 'zero' lookup 
       d.lookup_size = d.default_index
       d.lookup = torch.Tensor(d.lookup_size,d.dim)
       d.lookup[d.default_index] = torch.zeros(d.dim)
-      d.lookup[d.vocab_size] = torch.randn(d.dim) --<UNK> symbol
 
       for word,num in pairs(d.index) do
          if (d.word_emb[word] ~= nil) then
@@ -137,10 +144,12 @@ function M.load(d,opts)
       end
 
       print("Saving Lookup")
-      torch.save(d.saved_lookup_file,{d.default_index, d.lookup_size, d.lookup})
+      torch.save(d.saved_lookup_file,
+                 {d.default_index, d.lookup_size, d.lookup})
    else
       print("Loading Lookup")
-      d.default_index, d.lookup_size, d.lookup = unpack(torch.load(d.saved_lookup_path))
+      d.default_index, d.lookup_size, d.lookup = 
+         unpack(torch.load(d.saved_lookup_file))
    end
 
 end
@@ -196,7 +205,10 @@ function M.get(opts)
    -- print("\27[31mPost Processing\n---------------")  
    -- print("Shuffle Data")
 
-   --os.execute("paste -d \':\' " .. enc_d.file_path .. ' ' .. dec_d.file_path .. " | shuf | awk -v FS=\":\" \'{ print $1 > \"" .. enc_d.file_path .. '.shuf' .. "\" ; print $2 > \"" .. dec_d.file_path .. '.shuf' .. "\" }\'")
+   --os.execute("paste -d \':\' " .. enc_d.file_path .. ' ' 
+   -- .. dec_d.file_path .. " | shuf | awk -v FS=\":\" \'{ print $1 > \"" .. 
+   -- enc_d.file_path .. '.shuf' .. "\" ; print $2 > \"" .. 
+   -- dec_d.file_path .. '.shuf' .. "\" }\'")
 
    --enc_d.file_path = enc_d.file_path .. '.shuf'
    --dec_d.file_path = dec_d.file_path .. '.shuf'

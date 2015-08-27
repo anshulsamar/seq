@@ -371,8 +371,8 @@ local function loadMat(encLine,decLine,i)
       if enc_word ~= "" and enc_num_word < enc_data.len_max  then
          enc_num_word = enc_num_word + 1
          if enc_data.index[enc_word] == nil then
-            enc_word = '<unk>'
             print(enc_word)
+            enc_word = '<unk>'
          end
          enc_x[enc_num_word + offset][i] = enc_data.index[enc_word]
          last_word = enc_word
@@ -449,7 +449,7 @@ local function getOpts()
    cmd:option('-weight_init',.1)
    cmd:option('-lr',.7)
    cmd:option('-freq_floor',6)
-   cmd:option('-data_dir','/deep/group/speech/asamar/nlp/data/pennMod/')
+   cmd:option('-data_dir','/deep/group/speech/asamar/nlp/data/pennShuf/')
    cmd:option('-enc_train_file','enc_train.txt')
    cmd:option('-dec_train_file','dec_train.txt')
    cmd:option('-enc_test_file','enc_test.txt')
@@ -459,13 +459,13 @@ local function getOpts()
    cmd:option('-run_dir','/deep/group/speech/asamar/nlp/seq/penn/')
    cmd:option('-load_model',false)
    cmd:option('-parser','penn')
-   cmd:option('-test',false)
+   cmd:option('-test',true)
    local opts = cmd:parse(arg)
    opts.decode_dir = opts.run_dir .. '/decode/'
-   opts.enc_train_file = opts.data_dir + opts.enc_train_file
-   opts.dec_train_file = opts.data_dir + opts.dec_train_file
-   opts.enc_test_file = opts.data_dir + opts.enc_test_file
-   opts.dec_test_file = opts.data_dir + opts.dec_test_file
+   opts.enc_train_file = opts.data_dir .. opts.enc_train_file
+   opts.dec_train_file = opts.data_dir .. opts.dec_train_file
+   opts.enc_test_file = opts.data_dir .. opts.enc_test_file
+   opts.dec_test_file = opts.data_dir .. opts.dec_test_file
    return opts
 end
 
@@ -517,12 +517,16 @@ function run()
       end
 
       -- Open Data
+
+      local enc_f
+      local dec_f
+
       if opts.test then
-         local enc_f = io.open(enc_data.file_path_test,'r')
-         local dec_f = io.open(dec_data.file_path_test,'r')
+         enc_f = io.open(enc_data.test_file,'r')
+         dec_f = io.open(dec_data.test_file,'r')
       else
-         local enc_f = io.open(enc_data.file_path,'r')
-         local dec_f = io.open(dec_data.file_path,'r')
+         enc_f = io.open(enc_data.train_file,'r')
+         dec_f = io.open(dec_data.train_file,'r')
       end
     
       while true do

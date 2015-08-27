@@ -7,12 +7,14 @@ for a in [['ptb.train.txt','enc_train.txt','dec_train.txt'],['ptb.test.txt','enc
     save_dir = '/deep/group/speech/asamar/nlp/data/pennShuf/'
     data = open(data_dir + a[0],'r')
     enc_to = open(save_dir + a[1],'w')
-    dec_to = open(data_path_to + a[2],'w')
+    dec_to = open(save_dir + a[2],'w')
     
-    for line in data_from:
+    for line in data:
+        line = line.lower()
         s = line.split()
         part = {}
         shuf = {}
+
         splitind = int(math.floor(len(s)/3))
         
         shuf[0] = s[0:splitind]
@@ -27,9 +29,9 @@ for a in [['ptb.train.txt','enc_train.txt','dec_train.txt'],['ptb.test.txt','enc
             for i in range(0,3):
                 shuffle(shuf[j])
                 enc_to.write(' '.join(shuf[j]))
-                enc_to.write('<EOS>\n')
+                enc_to.write(' <eos>\n')
                 dec_to.write(' '.join(part[j]))
-                dec_to.write('<EOS>\n')
+                dec_to.write(' <eos>\n')
 
 
     data.close()
