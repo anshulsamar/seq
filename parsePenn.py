@@ -11,8 +11,8 @@ if len(sys.argv) == 1:
     print('python parsePenn.py nameOfSaveDir [-shuf]')
     exit()
 
-data_dir = '/deep/group/speech/asamar/nlp/data/penn/'
-save_dir = '/deep/group/speech/asamar/nlp/data/' + sys.argv[1] + '/'
+data_dir = '/deep/group/speech/asamar/nlp/data/penn/pennSource/'
+save_dir = '/deep/group/speech/asamar/nlp/data/penn/' + sys.argv[1] + '/'
 
 if not os.path.exists(save_dir):
     print('Making directory ' + save_dir)
