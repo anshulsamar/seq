@@ -407,7 +407,7 @@ local function loadMat(encLine,decLine,i)
    return enc_num_word, dec_num_word
 end
 
-local function decode(epoch,iter,batch,enc_line,dec_line,test)
+local function decode(epoch,iter,batch,enc_line,dec_line,test,opts)
 
    local indexes = {}
    for i=1,#model.output do
@@ -418,7 +418,8 @@ local function decode(epoch,iter,batch,enc_line,dec_line,test)
    local runtime = "train"
    if test then runtime = "test" end
 
-   local decodeName = 'decode_' .. runtime .. '_' .. epoch .. '_' .. iter .. '.txt'
+   local decodeName = 'decode_' .. runtime .. '_' .. (epoch + opts.start) 
+      .. '_' .. iter .. '.txt'
    local f = io.open(opts.decode_dir .. decodeName,'a+')
 
    for i=1,#dec_line do
@@ -461,7 +462,7 @@ local function getOpts()
    cmd:option('-run_dir','/deep/group/speech/asamar/nlp/seq/penn/')
    cmd:option('-load_model',false)
    cmd:option('-parser','penn')
-   cmd:option('-test',true)
+   cmd:option('-test_only',false)
    cmd:option('-stats',false)
    local opts = cmd:parse(arg)
    opts.decode_dir = opts.run_dir .. '/decode/'
@@ -497,17 +498,22 @@ function run()
    setupEncoder()
    print("Setting up Decoder")
    setupDecoder()
+   stats = {}
+   stats.train = {avg_dec_err_epoch = {}}
+   stats.test = {avg_dec_err_epoch = {}}
    if opts.load_model then loadModel() end
 
    -- Training
    print("\27[31mTraining\n----------")
-   stats = {}
-   stats.train = {avg_dec_err_epoch = {}}
-   stats.test = {avg_dec_err_epoch = {}}
+   local test_options
+   if opts.test_only then
+      test_options = {true}
+   else
+      test_options = {false, true}
+   end
 
-   local bool = {false, true}
    for epoch=1,(opts.max_epoch - opts.start) do
-      for _,test in ipairs(bool) do
+      for _,test in ipairs(test_options) do
          -- Setup
          local iter = 0
          stats.train.avg_enc_err = 0
@@ -589,7 +595,7 @@ function run()
             fp(enc_x,enc_y,dec_x,dec_y,batch,test)
             bp(enc_x,enc_y,dec_x,dec_y,batch,test)
             log(epoch,iter,test)
-            decode(epoch,iter,batch,enc_line,dec_line,test)
+            decode(epoch,iter,batch,enc_line,dec_line,test,opts)
             if batch.size ~= opts.batch_size then
                break
             end
