@@ -78,8 +78,8 @@ function M.parse(data_file,opts)
 
    if index['<unk>'] == nil then
       vocab_size = vocab_size + 1
-      table.insert(rev_index, word)
-      index[word] = vocab_size
+      table.insert(rev_index, '<unk>')
+      index['<unk>'] = vocab_size
    end
 
    print("Total Lines " .. total_lines)
@@ -146,8 +146,11 @@ function M.load(d,opts)
       print("Saving Lookup")
       torch.save(d.saved_lookup_file,
                  {d.default_index, d.lookup_size, d.lookup})
+      --d.default_index, d.lookup_size, d.lookup = 
+      --   unpack(torch.load(d.saved_lookup_file))
+
    else
-      print("Loading Lookup")
+      print("Loading Lookup: " .. d.saved_lookup_file)
       d.default_index, d.lookup_size, d.lookup = 
          unpack(torch.load(d.saved_lookup_file))
    end

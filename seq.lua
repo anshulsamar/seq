@@ -18,14 +18,16 @@ require 'paths'
 require 'gnuplot'
 require 'math'
 
-local function transfer_data(x)
-   return x:cuda()
-end
+
 
 model = {}
 local encoder, decoder
 local params = {encoderx ={}, encoderdx = {}, decoderx = {}, decoderdx = {}}
 local data = {}
+
+local function transfer_data(x)
+   return x:cuda()
+end
 
 local function lstm(x, prev_c, prev_h)
    -- Calculate four gates together (rows of x are individual examples)
@@ -444,15 +446,15 @@ local function getOpts()
    cmd:option('-rnn_size',300)
    cmd:option('-batch_size',96)
    cmd:option('-max_grad_norm',5)
-   cmd:option('-max_epoch',25)
+   cmd:option('-max_epoch',15)
    cmd:option('-start',0)
    cmd:option('-anneal',true)
    cmd:option('-anneal_after',10)
    cmd:option('-decay',2)
    cmd:option('-weight_init',.1)
-   cmd:option('-lr',1)
+   cmd:option('-lr',0.7)
    cmd:option('-freq_floor',6)
-   cmd:option('-data_dir','/deep/group/speech/asamar/nlp/data/penn/pennNormal/')
+   cmd:option('-data_dir','/deep/group/speech/asamar/nlp/data/penn/pennSplit/')
    cmd:option('-enc_train_file','enc_train.txt')
    cmd:option('-dec_train_file','dec_train.txt')
    cmd:option('-enc_test_file','enc_test.txt')
@@ -464,6 +466,7 @@ local function getOpts()
    cmd:option('-parser','penn')
    cmd:option('-test_only',false)
    cmd:option('-stats',false)
+   cmd:option('-auto',false)
    local opts = cmd:parse(arg)
    opts.decode_dir = opts.run_dir .. '/decode/'
    opts.enc_train_file = opts.data_dir .. opts.enc_train_file
@@ -491,6 +494,10 @@ function run()
    -- Data
    print("Loading Data")
    enc_data, dec_data = dataLoader.get(opts)
+   if opts.auto then
+      dec_data = enc_data
+   end
+   print(enc_data.lookup)
 
    -- Network
    print("\27[31mCreating Network\n----------------")
@@ -501,7 +508,10 @@ function run()
    stats = {}
    stats.train = {avg_dec_err_epoch = {}}
    stats.test = {avg_dec_err_epoch = {}}
-   if opts.load_model then loadModel() end
+   if opts.load_model then 
+      print('Loading Model')
+      loadModel() 
+   end
 
    -- Training
    print("\27[31mTraining\n----------")
@@ -591,7 +601,7 @@ function run()
             end
 
             -- Forward and Backward Prop
-
+            print(enc_line)
             fp(enc_x,enc_y,dec_x,dec_y,batch,test)
             bp(enc_x,enc_y,dec_x,dec_y,batch,test)
             log(epoch,iter,test)
