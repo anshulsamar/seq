@@ -148,20 +148,36 @@ local function reset_ds()
 end
 
 local function fp(enc_x, enc_y, dec_x, dec_y, batch, test)
+
+   print('enc_data len max ' .. enc_data.len_max)
+   print('batch len max ' .. batch.enc_len_max)
    reset_s()
    local ret
-   for i = 1, batch.enc_len_max do
+   for i = enc_data.len_max - batch.enc_len_max + 1, enc_data.len_max do
       local s = model.enc_s[i - 1]
+      print('state')
       ret = model.encoder[i]:forward({enc_x[i], enc_y[i], s})
       model.enc_err[i] = ret[1]
       model.enc_s[i] = ret[2]
+
       for j = 1, batch.size do
-         if batch.enc_line_length[j] == batch.enc_len_max - i then
+         if i < enc_data.len_max - batch.enc_line_length[j] + 1  then
+--batch.enc_line_length[j] == batch.enc_len_max - i then
             for d = 1, 2 * opts.layers do
                model.enc_s[i][d][j]:zero()
             end
          end
       end
+      for j = batch.size + 1, opts.batch_size do
+         for d = 1, 2 * opts.layers do
+            model.enc_s[i][d][j]:zero()
+         end
+      end
+
+      print(model.enc_s[i][1])
+
+
+
    end
 
    if test then
@@ -181,11 +197,18 @@ local function fp(enc_x, enc_y, dec_x, dec_y, batch, test)
       end
       model.dec_err[i] = ret[1]
       model.dec_s[i] = ret[2]
+      print('forward prop')
+      print(model.dec_s[i][1])
       for j = 1, batch.size do
          if batch.dec_line_length[j] == i then
             for d = 1, 2 * opts.layers do
                model.dec_s[i][d][j]:zero()
             end
+         end
+      end
+      for j = batch.size + 1, opts.batch_size do
+         for d = 1, 2 * opts.layers do
+            model.dec_s[i][d][j]:zero()
          end
       end
    end
@@ -202,11 +225,19 @@ local function bp(enc_x,enc_y,dec_x,dec_y,batch,test)
 
    for i = batch.dec_len_max, 1, -1 do
       local s = model.dec_s[i-1]
+      print('dec x')
+      print(dec_x[i])
+      print('dec y')
+      print(dec_y[i])
+      print('state')
+      print(s[1])
       local derr = transfer_data(torch.ones(1))
       local input = {dec_x[i], dec_y[i], s}
       local output = {derr, model.dec_ds}
       local tmp = model.decoder[i]:backward(input, output)[3]
       g_replace_table(model.dec_ds, tmp)
+      print('dec ds')
+      print(model.dec_ds[1])
       cutorch.synchronize()
    end
 
@@ -220,6 +251,11 @@ local function bp(enc_x,enc_y,dec_x,dec_y,batch,test)
             end
          end
       end
+      for j = batch.size + 1, opts.batch_size do
+         for d = 1, 2 * opts.layers do
+            model.enc_ds[d][j]:zero()
+         end
+      end
 
       local new_i = batch.enc_len_max - i
       local s = model.enc_s[new_i-1]
@@ -231,6 +267,9 @@ local function bp(enc_x,enc_y,dec_x,dec_y,batch,test)
       g_replace_table(model.enc_ds, tmp)
       cutorch.synchronize()
    end
+   
+   print(params.encoderdx:sum())
+   print(params.decoderdx:sum())
 
    model.enc_norm_dw = params.encoderdx:norm()
 
@@ -340,11 +379,11 @@ end
 
 local function initializeBatch(size)
    batch.size = size
-   batch.enc_lengths = torch.zeros(opts.batch_size)
-   batch.dec_lengths = torch.zeros(opts.batch_size)
+   batch.enc_lengths = torch.zeros(batch.size)
+   batch.dec_lengths = torch.zeros(batch.size)
 end
 
-local function initializeEncMat()
+local function initializeEncMat(batch)
    for i=1,enc_data.len_max do
       local x_init = torch.ones(opts.batch_size) * enc_data.default_index
       table.insert(enc_x,transfer_data(x_init))
@@ -352,7 +391,7 @@ local function initializeEncMat()
    end
 end
 
-local function initializeDecMat()
+local function initializeDecMat(batch)
    for i=1,dec_data.len_max do
       local x_init = torch.ones(opts.batch_size) * dec_data.default_index
       table.insert(dec_x,transfer_data(x_init))
@@ -366,13 +405,13 @@ local function loadMat(encLine,decLine,i)
    local last_word = ""
    local len = 0
    for _,enc_word in ipairs(stringx.split(encLine,' ')) do
-      if enc_word ~= "" and len < enc_data.len_max  then
+      if enc_word ~= "" then --and len < batch.enc_len_max  then
          len = len + 1
       end
    end
    local offset = enc_data.len_max - len
    for _,enc_word in ipairs(stringx.split(encLine,' ')) do
-      if enc_word ~= "" and enc_num_word < enc_data.len_max  then
+      if enc_word ~= "" then -- and enc_num_word < _data.len_max  then
          enc_num_word = enc_num_word + 1
          if enc_data.index[enc_word] == nil then
             print(enc_word)
@@ -386,11 +425,12 @@ local function loadMat(encLine,decLine,i)
    batch.enc_lengths[i] = enc_num_word
    
    dec_x[1][i] = enc_data.index[last_word]
-
+   --print('Dec x entry value')
+   --print(dec_x[1][i])
    local dec_num_word = 0
    local indexes = {}
    for _,dec_word in ipairs(stringx.split(decLine,' ')) do
-      if dec_word ~= "" and dec_num_word < dec_data.len_max then
+      if dec_word ~= "" then --and dec_num_word < dec_data.len_max then
          dec_num_word = dec_num_word + 1
          if dec_data.index[dec_word] == nil then
             dec_word = '<unk>'
@@ -405,7 +445,6 @@ local function loadMat(encLine,decLine,i)
    end
 
    batch.dec_lengths[i] = dec_num_word
-
    return enc_num_word, dec_num_word
 end
 
@@ -442,11 +481,11 @@ local function getOpts()
    local cmd = torch.CmdLine()
    cmd:option('-layers',2)
    cmd:option('-gpu',1)
-   cmd:option('-in_size',300)
-   cmd:option('-rnn_size',300)
-   cmd:option('-batch_size',96)
+   cmd:option('-in_size',2)
+   cmd:option('-rnn_size',2)
+   cmd:option('-batch_size',2)
    cmd:option('-max_grad_norm',5)
-   cmd:option('-max_epoch',15)
+   cmd:option('-max_epoch',1)
    cmd:option('-start',0)
    cmd:option('-anneal',true)
    cmd:option('-anneal_after',10)
@@ -464,7 +503,8 @@ local function getOpts()
    cmd:option('-run_dir','/deep/group/speech/asamar/nlp/seq/penn/')
    cmd:option('-load_model',false)
    cmd:option('-parser','penn')
-   cmd:option('-test_only',false)
+   cmd:option('-test',false)
+   cmd:option('-train',true)
    cmd:option('-stats',false)
    cmd:option('-auto',false)
    local opts = cmd:parse(arg)
@@ -497,6 +537,7 @@ function run()
    if opts.auto then
       dec_data = enc_data
    end
+   print(enc_data.index)
    print(enc_data.lookup)
 
    -- Network
@@ -515,11 +556,13 @@ function run()
 
    -- Training
    print("\27[31mTraining\n----------")
-   local test_options
-   if opts.test_only then
-      test_options = {true}
-   else
-      test_options = {false, true}
+   local test_options = {}
+   if opts.train then
+      table.insert(test_options, false)
+   end
+
+   if opts.test then
+      table.insert(test_options, true)
    end
 
    for epoch=1,(opts.max_epoch - opts.start) do

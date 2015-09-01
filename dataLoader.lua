@@ -126,34 +126,22 @@ function M.load(d,opts)
       end
    end
 
-   if paths.filep(d.saved_lookup_file) == false then
-
-      print("Generating Lookup")
-
-      d.default_index = d.vocab_size + 1 -- for the 'zero' lookup 
-      d.lookup_size = d.default_index
-      d.lookup = torch.Tensor(d.lookup_size,d.dim)
-      d.lookup[d.default_index] = torch.zeros(d.dim)
-
-      for word,num in pairs(d.index) do
-         if (d.word_emb[word] ~= nil) then
-            d.lookup[num] = d.word_emb[word]
-         else
-            d.lookup[num] = torch.randn(d.dim)
-         end
+   print("Generating Lookup")
+   
+   d.default_index = d.vocab_size + 1 -- for the 'zero' lookup 
+   d.lookup_size = d.default_index
+   d.lookup = torch.Tensor(d.lookup_size,d.dim)
+   d.lookup[d.default_index] = torch.zeros(d.dim)
+   
+   for word,num in pairs(d.index) do
+      if (d.word_emb[word] ~= nil) then
+         d.lookup[num] = d.word_emb[word]
+      else
+         d.lookup[num] = torch.randn(d.dim)
       end
-
-      print("Saving Lookup")
-      torch.save(d.saved_lookup_file,
-                 {d.default_index, d.lookup_size, d.lookup})
-      --d.default_index, d.lookup_size, d.lookup = 
-      --   unpack(torch.load(d.saved_lookup_file))
-
-   else
-      print("Loading Lookup: " .. d.saved_lookup_file)
-      d.default_index, d.lookup_size, d.lookup = 
-         unpack(torch.load(d.saved_lookup_file))
    end
+
+   -- Not saving this to keep debugging easy (randomness)
 
 end
 
