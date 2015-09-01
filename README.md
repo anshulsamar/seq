@@ -8,3 +8,6 @@ Built ontop of github.com/wojzaremba/lstm
 Some implementation notes:
 - EOS and unknown words initialized to unit normal vectors
 - Currently data is shuffled but not sorted by length
+
+
+Note, currently no dropout support (although it should be fairly easy to re-add Wojzaremba's dropout code. I removed it for now, because I hadn't integrated it). I removed other functions I was not using as well.

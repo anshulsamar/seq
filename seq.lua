@@ -411,8 +411,8 @@ local function getOpts()
 
    -- Network
    cmd:option('-layers',2)
-   cmd:option('-in_size',2)
-   cmd:option('-rnn_size',2)
+   cmd:option('-in_size',300)
+   cmd:option('-rnn_size',300)
    cmd:option('-load_model',false)
 
    -- Training
