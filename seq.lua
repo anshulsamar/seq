@@ -18,8 +18,6 @@ require 'paths'
 require 'gnuplot'
 require 'math'
 
-
-
 model = {}
 local encoder, decoder
 local params = {encoderx ={}, encoderdx = {}, decoderx = {}, decoderdx = {}}
@@ -147,146 +145,114 @@ local function reset_ds()
    end
 end
 
-local function fp(enc_x, enc_y, dec_x, dec_y, batch, test)
-
-   print('enc_data len max ' .. enc_data.len_max)
-   print('batch len max ' .. batch.enc_len_max)
-   reset_s()
-   local ret
-   for i = enc_data.len_max - batch.enc_len_max + 1, enc_data.len_max do
-      local s = model.enc_s[i - 1]
-      print('state')
-      ret = model.encoder[i]:forward({enc_x[i], enc_y[i], s})
-      model.enc_err[i] = ret[1]
-      model.enc_s[i] = ret[2]
-
-      for j = 1, batch.size do
-         if i < enc_data.len_max - batch.enc_line_length[j] + 1  then
---batch.enc_line_length[j] == batch.enc_len_max - i then
-            for d = 1, 2 * opts.layers do
-               model.enc_s[i][d][j]:zero()
-            end
-         end
-      end
-      for j = batch.size + 1, opts.batch_size do
-         for d = 1, 2 * opts.layers do
-            model.enc_s[i][d][j]:zero()
-         end
-      end
-
-      print(model.enc_s[i][1])
-
-
-
-   end
+local function fpSeq(x, y, batch_len_max, line_length, num_examples, state, err, net, dec)
 
    if test then
-      local x_init = transfer_data(torch.ones(opts.batch_size) * dec_data.default_index)
-      dec_x = {}
-      table.insert(dec_x,x_init)
+      local x_init = torch.ones(opts.batch_size) * dec_data.default_index
+      dec_x = {transfer_data(x_init)}
    end
 
-   model.dec_s[0] = model.enc_s[batch.enc_len_max]
+   local ret
+   for i = 1, batch_len_max do
+      local s = state[i - 1]
+      ret = net:forward({x[i], y[i], s})
 
-   for i = 1, batch.dec_len_max do
-      local s = model.dec_s[i - 1]
-      ret = model.decoder[i]:forward({dec_x[i], dec_y[i], s})
-      if test and i < batch.dec_len_max then
+      if test and dec then -- and i < batch_len_max then
         local _, ind = torch.max(model.output[i],2)
-        table.insert(dec_x,ind:select(2,1))
+        table.insert(x,ind:select(2,1))
       end
-      model.dec_err[i] = ret[1]
-      model.dec_s[i] = ret[2]
-      print('forward prop')
-      print(model.dec_s[i][1])
-      for j = 1, batch.size do
-         if batch.dec_line_length[j] == i then
+
+      err[i] = ret[1]
+      state[i] = ret[2]
+
+      for j = 1, num_examples do
+         if i >= line_length[j]  then
             for d = 1, 2 * opts.layers do
-               model.dec_s[i][d][j]:zero()
+               state[i][d][j]:zero()
             end
          end
       end
-      for j = batch.size + 1, opts.batch_size do
+
+      for j = num_examples + 1, opts.batch_size do
          for d = 1, 2 * opts.layers do
-            model.dec_s[i][d][j]:zero()
+            state[i][d][j]:zero()
          end
       end
+
    end
+end
+
+local function fp(enc_x, enc_y, dec_x, dec_y, batch, test)
+   reset_s()
+
+   fpSeq(enc_x,enc_y,batch.enc_len_max, enc_data.line_length, batch.size, 
+      model.enc_s, model.enc_err, model.encoder, test, false)
+
+   for j = 1, batch.size do
+      for d = 1, 2 * opts.layers do
+         model.dec_s[0][d][j] = model.enc_s[enc_data.line_length[j]][d][j]
+      end
+   end
+
+   fpSeq(dec_x, dec_y,batch.dec_len_max, dec_data.line_length, batch.size, 
+      model.dec_s, model.dec_err, model.decoder, test, true)
+end
+
+
+local function bpSeq(x, y, batch_len_max, line_length, state, ds, net, grad)
+
+   grad:zero()
+   for i = batch_len_max, 1, -1 do
+
+      if dec == false then
+         for j = 1, num_examples do
+            if line_length[j] == i then
+               for d = 1, 2 * opts.layers do
+                  ds[d][j] = model.dec_ds[d][j]
+               end
+            end
+         end
+         for j = num_examples + 1, opts.batch_size do
+            for d = 1, 2 * opts.layers do
+               ds[d][j]:zero()
+            end
+         end
+      end
+
+      local s = state[i-1]
+      local derr = transfer_data(torch.ones(1))
+      local input = {x[i], y[i], s}
+      local output = {derr, ds}
+      local tmp = net:backward(input, output)[3]
+      g_replace_table(ds, tmp)
+      cutorch.synchronize()
+   end
+
+   if grad:norm() > opts.max_grad_norm then
+      local shrink_factor = opts.max_grad_norm/grad:norm()
+      grad:mul(shrink_factor)
+   end
+
+   return grad
 
 end
 
 local function bp(enc_x,enc_y,dec_x,dec_y,batch,test)
 
    if test then return end
-
-   params.encoderdx:zero()
-   params.decoderdx:zero()
    reset_ds()
-
-   for i = batch.dec_len_max, 1, -1 do
-      local s = model.dec_s[i-1]
-      print('dec x')
-      print(dec_x[i])
-      print('dec y')
-      print(dec_y[i])
-      print('state')
-      print(s[1])
-      local derr = transfer_data(torch.ones(1))
-      local input = {dec_x[i], dec_y[i], s}
-      local output = {derr, model.dec_ds}
-      local tmp = model.decoder[i]:backward(input, output)[3]
-      g_replace_table(model.dec_ds, tmp)
-      print('dec ds')
-      print(model.dec_ds[1])
-      cutorch.synchronize()
-   end
-
-   g_replace_table(model.enc_ds,model.dec_ds)
-
-   for i = 0, batch.enc_len_max-1 do
-      for j = 1, batch.size do
-         if batch.enc_line_length[j] == i then
-            for d = 1, 2 * opts.layers do
-               model.enc_ds[d][j]:zero()
-            end
-         end
-      end
-      for j = batch.size + 1, opts.batch_size do
-         for d = 1, 2 * opts.layers do
-            model.enc_ds[d][j]:zero()
-         end
-      end
-
-      local new_i = batch.enc_len_max - i
-      local s = model.enc_s[new_i-1]
-      local derr = transfer_data(torch.ones(1))
-      local input = {enc_x[new_i], enc_y[new_i], s}
-      local output = {derr, model.enc_ds}
-      local b = model.encoder[new_i]:backward(input, output)
-      local tmp = b[3]
-      g_replace_table(model.enc_ds, tmp)
-      cutorch.synchronize()
-   end
    
-   print(params.encoderdx:sum())
-   print(params.decoderdx:sum())
+   grad = bpSeq(dec_x, dec_y, batch.dec_len_max, batch.dec_line_length, 
+                model.dec_s, model.dec_ds, model.decoder, params.decoderdx)
+   
+   model.dec_norm_dw = grad:norm()
+   params.decoderx:add(grad:mul(-opts.lr))
 
-   model.enc_norm_dw = params.encoderdx:norm()
-
-   if model.enc_norm_dw > opts.max_grad_norm then
-      local shrink_factor = opts.max_grad_norm/model.enc_norm_dw
-      params.encoderdx:mul(shrink_factor)
-   end
-   params.encoderx:add(params.encoderdx:mul(-opts.lr))
-
-   model.dec_norm_dw = params.decoderdx:norm()
-
-   if model.dec_norm_dw > opts.max_grad_norm then
-      local shrink_factor = opts.max_grad_norm/model.dec_norm_dw
-      params.decoderdx:mul(shrink_factor)
-   end
-   params.decoderx:add(params.decoderdx:mul(-opts.lr))
-
+   grad = bpSeq(enc_x, enc_y, batch.enc_len_max, batch.enc_line_length, 
+                model.enc_s, model.enc_ds, model.encoder, params.encoderdx)
+   
+   model.enc_norm_dw = grad:norm()
+   params.encoderx:add(grad:mul(-opts.lr))
 
 end
 
@@ -297,13 +263,13 @@ local function getError()
    for i = 1, batch.enc_len_max do
       tot_enc_err = tot_enc_err + model.enc_err[i]
    end
-   --tot_enc_err = tot_enc_err * opts.batch_size / batch.size
+   tot_enc_err = tot_enc_err * opts.batch_size / batch.size
 
    local tot_dec_err = 0
    for i = 1, batch.dec_len_max do
       tot_dec_err = tot_dec_err + model.dec_err[i]
    end
-   --tot_dec_err = tot_dec_err * opts.batch_size / batch.size
+   tot_dec_err = tot_dec_err * opts.batch_size / batch.size
    return tot_enc_err, tot_dec_err
 end
 
@@ -399,53 +365,66 @@ local function initializeDecMat(batch)
    end
 end
 
-local function loadMat(encLine,decLine,i)
+local function loadMat(line, index, i, x, y, dec)
 
-   local enc_num_word = 0
+   local indexes = {}
+   local num_word = 0
    local last_word = ""
    local len = 0
-   for _,enc_word in ipairs(stringx.split(encLine,' ')) do
-      if enc_word ~= "" then --and len < batch.enc_len_max  then
+   for _,word in ipairs(stringx.split(line,' ')) do
+      if word ~= "" then
          len = len + 1
       end
    end
-   local offset = enc_data.len_max - len
-   for _,enc_word in ipairs(stringx.split(encLine,' ')) do
-      if enc_word ~= "" then -- and enc_num_word < _data.len_max  then
-         enc_num_word = enc_num_word + 1
-         if enc_data.index[enc_word] == nil then
-            print(enc_word)
-            enc_word = '<unk>'
+
+   for word in ipairs(stringx.split(line,' ')) do
+      if word ~= "" then
+         word = word + 1
+         if index[word] == nil then
+            print(word)
+            word = '<unk>'
          end
-         enc_x[enc_num_word + offset][i] = enc_data.index[enc_word]
-         last_word = enc_word
+         if dec then
+            y[num_word][i] = index[word]
+            indexes[word] = {index[word],word}
+         else
+            x[num_word][i] = index[word]
+         end
+         last_word = word
       end
    end
 
-   batch.enc_lengths[i] = enc_num_word
-   
-   dec_x[1][i] = enc_data.index[last_word]
-   --print('Dec x entry value')
-   --print(dec_x[1][i])
-   local dec_num_word = 0
-   local indexes = {}
-   for _,dec_word in ipairs(stringx.split(decLine,' ')) do
-      if dec_word ~= "" then --and dec_num_word < dec_data.len_max then
-         dec_num_word = dec_num_word + 1
-         if dec_data.index[dec_word] == nil then
-            dec_word = '<unk>'
-         end
-         dec_y[dec_num_word][i] = dec_data.index[dec_word]
-         indexes[dec_num_word] = {dec_data.index[dec_word],dec_word}
+   return num_word, last_word
+
+   if dec then
+      for j=1,#indexes - 1 do
+         x[j+1][i] = indexes[j][1]
       end
    end
 
-   for j=1,#indexes - 1 do
-      dec_x[j+1][i] = indexes[j][1]
+end
+
+local function load(enc_line, dec_line):
+   for i=1,#enc_line do
+      if enc_line[i] ~= nil then
+         enc_num_word, last_word = loadMat(enc_line[i],
+                                           enc_data.index,i,
+                                           enc_x,enc_y,false)
+         dec_x[1][i] = enc_data.index[last_word]
+         dec_num_word, _ = loadMat(dec_line[i],
+                                   dec_data.index,i,
+                                   dec_x,dec_y,true)
+         if enc_num_word > batch.enc_len_max then
+            batch.enc_len_max = enc_num_word
+         end
+         if dec_num_word > batch.dec_len_max then
+            batch.dec_len_max = dec_num_word
+         end
+         batch.dec_line_length[i] = dec_num_word
+         batch.enc_line_length[i] = enc_num_word
+      end
    end
 
-   batch.dec_lengths[i] = dec_num_word
-   return enc_num_word, dec_num_word
 end
 
 local function decode(epoch,iter,batch,enc_line,dec_line,test,opts)
@@ -623,25 +602,12 @@ function run()
 
             collectgarbage()
 
-            -- Load Matrices
+            -- Load Matrices and Line Lengths
             batch.enc_len_max = 0
             batch.dec_len_max = 0
             batch.dec_line_length = {}
             batch.enc_line_length = {}
-
-            for i=1,#enc_line do
-               if enc_line[i] ~= nil then
-                  enc_num_word, dec_num_word = loadMat(enc_line[i],dec_line[i],i)
-                  if enc_num_word > batch.enc_len_max then
-                     batch.enc_len_max = enc_num_word
-                  end
-                  if dec_num_word > batch.dec_len_max then
-                     batch.dec_len_max = dec_num_word
-                  end
-                  batch.dec_line_length[i] = dec_num_word
-                  batch.enc_line_length[i] = enc_num_word
-               end
-            end
+            load(enc_line, dec_line)
 
             -- Forward and Backward Prop
             print(enc_line)
