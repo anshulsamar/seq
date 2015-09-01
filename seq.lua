@@ -152,9 +152,8 @@ local function fpSeq(x, y, batch_len_max, line_length, num_examples, state, err,
 
       err[i] = ret[1]
       state[i] = ret[2]
-
       for j = 1, num_examples do
-         if i >= line_length[j]  then
+         if i > line_length[j]  then
             for d = 1, 2 * opts.layers do
                state[i][d][j]:zero()
             end
@@ -168,6 +167,8 @@ local function fpSeq(x, y, batch_len_max, line_length, num_examples, state, err,
       end
 
    end
+
+
 end
 
 local function fp(enc_x, enc_y, dec_x, dec_y, batch, test)
@@ -175,7 +176,7 @@ local function fp(enc_x, enc_y, dec_x, dec_y, batch, test)
    g_reset_s(model.dec_s,dec_data.len_max,opts)
 
    fpSeq(enc_x,enc_y,batch.enc_len_max, batch.enc_line_length, batch.size, 
-      model.enc_s, model.enc_err, model.encoder, test, false)
+         model.enc_s, model.enc_err, model.encoder, test, false)
 
    for j = 1, batch.size do
       for d = 1, 2 * opts.layers do
@@ -235,7 +236,7 @@ local function bp(enc_x,enc_y,dec_x,dec_y,batch,test)
                 batch.dec_len_max, batch.size, batch.dec_line_length, 
                 model.dec_s, model.dec_ds, model.decoder, 
                 params.decoderdx, true)
-
+   print(grad:sum())
    model.dec_norm_dw = grad:norm()
    params.decoderx:add(grad:mul(-opts.lr))
 
@@ -243,7 +244,7 @@ local function bp(enc_x,enc_y,dec_x,dec_y,batch,test)
                 batch.enc_len_max, batch.size, batch.enc_line_length, 
                 model.enc_s, model.enc_ds, model.encoder, 
                 params.encoderdx, false)
-
+   print(grad:sum())
    model.enc_norm_dw = grad:norm()
    params.encoderx:add(grad:mul(-opts.lr))
 
@@ -314,7 +315,6 @@ local function loadModel()
 end
 
 local function loadMat(line, index, i, x, y, dec)
-
    local indexes = {}
    local num_word = 0
    local last_word = ""
@@ -325,7 +325,7 @@ local function loadMat(line, index, i, x, y, dec)
       end
    end
 
-   for word in ipairs(stringx.split(line,' ')) do
+   for _,word in ipairs(stringx.split(line,' ')) do
       if word ~= "" then
          num_word = num_word + 1
          if index[word] == nil then
@@ -471,6 +471,7 @@ function run()
    if opts.auto then
       dec_data = enc_data
    end
+   print(enc_data.index)
 
    -- Network
    print("\27[31mCreating Network\n----------------")
