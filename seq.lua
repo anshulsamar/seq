@@ -20,8 +20,7 @@ require 'math'
 -- Global Data Structures
 -- ---------------------
 -- model: encoder, decoder, deltas, states, errors, etc. 
--- params: 'x' (as in params.encoderx) refers to weights/biases and 'dx' (as in p
--- arams.encoderdx) refers to the gradient of loss with respect to weight/biases
+-- params: 'x' refers to weights/biases and 'dx' to gradient
 -- data: lookup tables, indexes, etc.
 -- opts: command line options
 -- dec_output: softmax output of decoder (must be global)
@@ -133,7 +132,7 @@ local function setupDecoder()
    model.dec_err = transfer_data(torch.zeros(dec_data.len_max))
 end
 
-local function fpSeq(x, y, batch_len_max, line_length, num_examples, state, err, net, dec)
+local function fpSeq(x, y, batch_len_max, line_length, num_examples, state, err, net, test, dec)
 
    if test then
       local x_init = torch.ones(opts.batch_size) * dec_data.default_index
@@ -144,10 +143,9 @@ local function fpSeq(x, y, batch_len_max, line_length, num_examples, state, err,
    for i = 1, batch_len_max do
       local s = state[i - 1]
       ret = net[i]:forward({x[i], y[i], s})
-
       if test and dec then -- and i < batch_len_max then
-        local _, ind = torch.max(dec_output[i],2)
-        table.insert(x,ind:select(2,1))
+         local _, ind = torch.max(dec_output[i],2)
+         table.insert(x,ind:select(2,1))
       end
 
       err[i] = ret[1]
@@ -174,6 +172,7 @@ end
 local function fp(enc_x, enc_y, dec_x, dec_y, batch, test)
    g_reset_s(model.enc_s,enc_data.len_max,opts)
    g_reset_s(model.dec_s,dec_data.len_max,opts)
+
 
    fpSeq(enc_x,enc_y,batch.enc_len_max, batch.enc_line_length, batch.size, 
          model.enc_s, model.enc_err, model.encoder, test, false)
@@ -236,7 +235,6 @@ local function bp(enc_x,enc_y,dec_x,dec_y,batch,test)
                 batch.dec_len_max, batch.size, batch.dec_line_length, 
                 model.dec_s, model.dec_ds, model.decoder, 
                 params.decoderdx, true)
-   print(grad:sum())
    model.dec_norm_dw = grad:norm()
    params.decoderx:add(grad:mul(-opts.lr))
 
@@ -244,7 +242,6 @@ local function bp(enc_x,enc_y,dec_x,dec_y,batch,test)
                 batch.enc_len_max, batch.size, batch.enc_line_length, 
                 model.enc_s, model.enc_ds, model.encoder, 
                 params.encoderdx, false)
-   print(grad:sum())
    model.enc_norm_dw = grad:norm()
    params.encoderx:add(grad:mul(-opts.lr))
 
@@ -332,8 +329,6 @@ local function loadMat(line, index, i, x, y, dec)
             word = '<unk>'
          end
          if dec then
-            print(word)
-            print(index[word])
             y[num_word][i] = index[word]
             indexes[word] = {index[word],word}
          else
@@ -386,8 +381,15 @@ local function decode(epoch,iter,batch,enc_line,dec_line,test,opts)
    local runtime = "train"
    if test then runtime = "test" end
 
+   if epoch + opts.start - 1 >= 1 then
+      local oldDecodeName = 'decode_' .. runtime .. '_' .. (epoch + opts.start - 1) 
+         .. '*'
+      os.execute('rm -rf ' .. opts.decode_dir .. oldDecodeName)
+   end
+
    local decodeName = 'decode_' .. runtime .. '_' .. (epoch + opts.start) 
       .. '_' .. iter .. '.txt'
+  
    local f = io.open(opts.decode_dir .. decodeName,'a+')
 
    for i=1,#dec_line do
@@ -415,7 +417,7 @@ local function getOpts()
 
    -- Training
    cmd:option('-max_grad_norm',5)
-   cmd:option('-max_epoch',1)
+   cmd:option('-max_epoch',15)
    cmd:option('-anneal',true)
    cmd:option('-anneal_after',10)
    cmd:option('-decay',2)
@@ -423,24 +425,22 @@ local function getOpts()
    cmd:option('-lr',0.7)
    cmd:option('-freq_floor',6)
    cmd:option('-start',0)
-   cmd:option('-test',false)
+   cmd:option('-test',true)
    cmd:option('-train',true)
    cmd:option('-gpu',1)
    cmd:option('-stats',false)
 
    -- Data
-   cmd:option('-auto',false) --autoencoder style (i.e. share lookup tables)
-   cmd:option('-batch_size',2)
-   cmd:option('-data_dir','/deep/group/speech/asamar/nlp/data/test/')
+   cmd:option('-share',true) -- share data and lookup table b/w enc/dec
+   cmd:option('-batch_size',96)
+   cmd:option('-data_dir','/deep/group/speech/asamar/nlp/data/numbers/')
    cmd:option('-enc_train_file','enc_train.txt')
    cmd:option('-dec_train_file','dec_train.txt')
    cmd:option('-enc_test_file','enc_test.txt')
    cmd:option('-dec_test_file','dec_test.txt')
    cmd:option('-glove',false)
    cmd:option('-glove_file','/deep/group/speech/asamar/nlp/glove/pretrained/glove.840B.300d.txt')
-   cmd:option('-run_dir','/deep/group/speech/asamar/nlp/seq/test/')
-   cmd:option('-parser','penn')
-
+   cmd:option('-run_dir','/deep/group/speech/asamar/nlp/seq/numbers/')
 
    local opts = cmd:parse(arg)
    opts.decode_dir = opts.run_dir .. '/decode/'
@@ -470,10 +470,9 @@ function run()
    -- Data
    print("Loading Data")
    enc_data, dec_data = dataLoader.get(opts)
-   if opts.auto then
+   if opts.share then
       dec_data = enc_data
    end
-   print(enc_data.index)
 
    -- Network
    print("\27[31mCreating Network\n----------------")
@@ -545,9 +544,9 @@ function run()
             -- Initialize Matrices and Batch Struct
             local batch = g_initialize_batch(#enc_line)
             local enc_x, enc_y = g_initialize_mat(enc_data.len_max,
-                                           enc_data.default_index, opts, batch)
+                                     enc_data.default_index, opts, batch)
             local dec_x, dec_y = g_initialize_mat(dec_data.len_max,
-                                            dec_data.default_index, opts, batch)
+                                     dec_data.default_index, opts, batch)       
 
             collectgarbage()
 
@@ -555,7 +554,6 @@ function run()
             load(enc_x, enc_y, enc_line, dec_x, dec_y, dec_line, batch)
 
             -- Forward and Backward Prop
-            print(enc_line)
             fp(enc_x,enc_y,dec_x,dec_y,batch,test)
             bp(enc_x,enc_y,dec_x,dec_y,batch,test)
 
