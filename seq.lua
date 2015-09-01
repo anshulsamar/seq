@@ -332,6 +332,8 @@ local function loadMat(line, index, i, x, y, dec)
             word = '<unk>'
          end
          if dec then
+            print(word)
+            print(index[word])
             y[num_word][i] = index[word]
             indexes[word] = {index[word],word}
          else

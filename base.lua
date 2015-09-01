@@ -87,6 +87,7 @@ function g_initialize_mat(len_max, default_index, opts)
       table.insert(y,transfer_data(torch.zeros(opts.batch_size)))
    end
    return x, y
+   
 end
 
 function g_make_run_dir(opts)
