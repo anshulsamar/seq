@@ -1,6 +1,6 @@
 -- Copyright (c) 2015 Anshul Samar
 -- Copyright (c) 2014, Facebook, Inc. All rights reserved.
--- Licensed under the Apache License, Version 2.0
+-- Licensed under the Apache License, Version 2.0 found in main folder
 -- See original LSTM/LM code: github.com/wojzaremba/lstm
 
 require 'io'
@@ -15,15 +15,24 @@ require 'base'
 require 'dataLoader'
 require 'reload'
 require 'paths'
-require 'gnuplot'
 require 'math'
 
-model = {}
-local encoder, decoder
+-- Global Data Structures
+-- ---------------------
+-- model: encoder, decoder, deltas, states, errors, etc. 
+-- params: 'x' (as in params.encoderx) refers to weights/biases and 'dx' (as in p
+-- arams.encoderdx) refers to the gradient of loss with respect to weight/biases
+-- data: lookup tables, indexes, etc.
+-- opts: command line options
+-- dec_output: softmax output of decoder (must be global)
+
+local model = {}
 local params = {encoderx ={}, encoderdx = {}, decoderx = {}, decoderdx = {}}
 local data = {}
+local opts
+dec_output = {}
 
-local function transfer_data(x)
+function transfer_data(x)
    return x:cuda()
 end
 
@@ -81,7 +90,7 @@ local function create_network(criterion,lookup,lookup_size,vocab_size)
 end
 
 local function setupEncoder()
-   encoder = create_network(EncCriterion,enc_data.lookup,
+   local encoder = create_network(EncCriterion,enc_data.lookup,
                             enc_data.lookup_size,enc_data.vocab_size)
    params.encoderx, params.encoderdx = encoder:getParameters()
    model.encoder = g_cloneManyTimes(encoder, enc_data.len_max)
@@ -103,7 +112,7 @@ local function setupEncoder()
 end
 
 local function setupDecoder()
-   decoder = create_network(DecCriterion,dec_data.lookup,
+   local decoder = create_network(DecCriterion,dec_data.lookup,
                             dec_data.lookup_size,dec_data.vocab_size)
    params.decoderx, params.decoderdx = decoder:getParameters()
    model.decoder = g_cloneManyTimes(decoder, dec_data.len_max)
@@ -124,27 +133,6 @@ local function setupDecoder()
    model.dec_err = transfer_data(torch.zeros(dec_data.len_max))
 end
 
-local function reset_s()
-   for j = 0, enc_data.len_max do
-      for d = 1, 2 * opts.layers do
-         model.enc_s[j][d]:zero()
-      end
-   end
-
-   for j = 0, dec_data.len_max do
-      for d = 1, 2 * opts.layers do
-         model.dec_s[j][d]:zero()
-      end
-   end
-end
-
-local function reset_ds()
-   for d = 1, 2 * opts.layers do
-      model.enc_ds[d]:zero()
-      model.dec_ds[d]:zero()
-   end
-end
-
 local function fpSeq(x, y, batch_len_max, line_length, num_examples, state, err, net, dec)
 
    if test then
@@ -155,10 +143,10 @@ local function fpSeq(x, y, batch_len_max, line_length, num_examples, state, err,
    local ret
    for i = 1, batch_len_max do
       local s = state[i - 1]
-      ret = net:forward({x[i], y[i], s})
+      ret = net[i]:forward({x[i], y[i], s})
 
       if test and dec then -- and i < batch_len_max then
-        local _, ind = torch.max(model.output[i],2)
+        local _, ind = torch.max(dec_output[i],2)
         table.insert(x,ind:select(2,1))
       end
 
@@ -183,23 +171,24 @@ local function fpSeq(x, y, batch_len_max, line_length, num_examples, state, err,
 end
 
 local function fp(enc_x, enc_y, dec_x, dec_y, batch, test)
-   reset_s()
+   g_reset_s(model.enc_s,enc_data.len_max,opts)
+   g_reset_s(model.dec_s,dec_data.len_max,opts)
 
-   fpSeq(enc_x,enc_y,batch.enc_len_max, enc_data.line_length, batch.size, 
+   fpSeq(enc_x,enc_y,batch.enc_len_max, batch.enc_line_length, batch.size, 
       model.enc_s, model.enc_err, model.encoder, test, false)
 
    for j = 1, batch.size do
       for d = 1, 2 * opts.layers do
-         model.dec_s[0][d][j] = model.enc_s[enc_data.line_length[j]][d][j]
+         model.dec_s[0][d][j] = model.enc_s[batch.enc_line_length[j]][d][j]
       end
    end
 
-   fpSeq(dec_x, dec_y,batch.dec_len_max, dec_data.line_length, batch.size, 
+   fpSeq(dec_x, dec_y,batch.dec_len_max, batch.dec_line_length, batch.size, 
       model.dec_s, model.dec_err, model.decoder, test, true)
 end
 
 
-local function bpSeq(x, y, batch_len_max, line_length, state, ds, net, grad)
+local function bpSeq(x, y, batch_len_max, num_examples, line_length, state, ds, net, grad, dec)
 
    grad:zero()
    for i = batch_len_max, 1, -1 do
@@ -223,7 +212,7 @@ local function bpSeq(x, y, batch_len_max, line_length, state, ds, net, grad)
       local derr = transfer_data(torch.ones(1))
       local input = {x[i], y[i], s}
       local output = {derr, ds}
-      local tmp = net:backward(input, output)[3]
+      local tmp = net[i]:backward(input, output)[3]
       g_replace_table(ds, tmp)
       cutorch.synchronize()
    end
@@ -240,24 +229,28 @@ end
 local function bp(enc_x,enc_y,dec_x,dec_y,batch,test)
 
    if test then return end
-   reset_ds()
-   
-   grad = bpSeq(dec_x, dec_y, batch.dec_len_max, batch.dec_line_length, 
-                model.dec_s, model.dec_ds, model.decoder, params.decoderdx)
-   
+   g_reset_ds(model.dec_ds,opts)   
+   g_reset_ds(model.enc_ds,opts)   
+   grad = bpSeq(dec_x, dec_y, 
+                batch.dec_len_max, batch.size, batch.dec_line_length, 
+                model.dec_s, model.dec_ds, model.decoder, 
+                params.decoderdx, true)
+
    model.dec_norm_dw = grad:norm()
    params.decoderx:add(grad:mul(-opts.lr))
 
-   grad = bpSeq(enc_x, enc_y, batch.enc_len_max, batch.enc_line_length, 
-                model.enc_s, model.enc_ds, model.encoder, params.encoderdx)
-   
+   grad = bpSeq(enc_x, enc_y, 
+                batch.enc_len_max, batch.size, batch.enc_line_length, 
+                model.enc_s, model.enc_ds, model.encoder, 
+                params.encoderdx, false)
+
    model.enc_norm_dw = grad:norm()
    params.encoderx:add(grad:mul(-opts.lr))
 
 end
 
 
-local function getError()
+local function getError(batch)
    local tot_enc_err = 0
 
    for i = 1, batch.enc_len_max do
@@ -274,7 +267,7 @@ local function getError()
 end
 
 
-local function log(epoch, iter, test)
+local function log(epoch, iter, test, stats, batch)
    local st 
    if test then 
       st = stats.test 
@@ -282,7 +275,7 @@ local function log(epoch, iter, test)
       st = stats.train 
    end
 
-   st.enc_err, st.dec_err = getError()
+   st.enc_err, st.dec_err = getError(batch)
    st.avg_enc_err = ((st.avg_enc_err * (iter-1)) + st.enc_err)/iter
    st.avg_dec_err = ((st.avg_dec_err * (iter-1)) + st.dec_err)/iter
    local runtime = "train"
@@ -302,12 +295,6 @@ local function log(epoch, iter, test)
 
 end
 
-local function makeDirectories()
-   if paths.dir(opts.run_dir) == nil then
-      paths.mkdir(opts.run_dir)
-      paths.mkdir(opts.decode_dir)
-   end
-end
 
 local function loadModel()
    filen = opts.run_dir .. '/model.th7'
@@ -326,45 +313,6 @@ local function loadModel()
    end
 end
 
-function plotErr(modelFile)
-   if stats == nil then
-      local oldModel = torch.load(modelFile)
-      stats = oldModel[4]
-   end
-   print('Train Avg Dec Err')
-   print(stats.train.avg_dec_err_epoch)
-   print('Test Avg Dec Err')
-   print(stats.test.avg_dec_err_epoch)
-   gnuplot.plot({torch.Tensor(stats.train.avg_dec_err_epoch)},
-                {torch.Tensor(stats.test.avg_dec_err_epoch)})
-   gnuplot.title('Average Decoder Error vs Epochs')
-   gnuplot.xlabel('Epoch')
-   gnuplot.ylabel('Negative Log Likelihood')
-end
-
-
-local function initializeBatch(size)
-   batch.size = size
-   batch.enc_lengths = torch.zeros(batch.size)
-   batch.dec_lengths = torch.zeros(batch.size)
-end
-
-local function initializeEncMat(batch)
-   for i=1,enc_data.len_max do
-      local x_init = torch.ones(opts.batch_size) * enc_data.default_index
-      table.insert(enc_x,transfer_data(x_init))
-      table.insert(enc_y,transfer_data(torch.zeros(opts.batch_size)))
-   end
-end
-
-local function initializeDecMat(batch)
-   for i=1,dec_data.len_max do
-      local x_init = torch.ones(opts.batch_size) * dec_data.default_index
-      table.insert(dec_x,transfer_data(x_init))
-      table.insert(dec_y,transfer_data(torch.zeros(opts.batch_size)))
-   end
-end
-
 local function loadMat(line, index, i, x, y, dec)
 
    local indexes = {}
@@ -379,9 +327,8 @@ local function loadMat(line, index, i, x, y, dec)
 
    for word in ipairs(stringx.split(line,' ')) do
       if word ~= "" then
-         word = word + 1
+         num_word = num_word + 1
          if index[word] == nil then
-            print(word)
             word = '<unk>'
          end
          if dec then
@@ -394,17 +341,16 @@ local function loadMat(line, index, i, x, y, dec)
       end
    end
 
-   return num_word, last_word
-
    if dec then
       for j=1,#indexes - 1 do
          x[j+1][i] = indexes[j][1]
       end
    end
 
+   return num_word, last_word
 end
 
-local function load(enc_line, dec_line):
+local function load(enc_x, enc_y, enc_line, dec_x, dec_y, dec_line, batch)
    for i=1,#enc_line do
       if enc_line[i] ~= nil then
          enc_num_word, last_word = loadMat(enc_line[i],
@@ -430,8 +376,8 @@ end
 local function decode(epoch,iter,batch,enc_line,dec_line,test,opts)
 
    local indexes = {}
-   for i=1,#model.output do
-      local y, ind = torch.max(model.output[i],2)
+   for i=1,#dec_output do
+      local y, ind = torch.max(dec_output[i],2)
       table.insert(indexes,ind)
    end
 
@@ -458,34 +404,42 @@ end
 
 local function getOpts()
    local cmd = torch.CmdLine()
+
+   -- Network
    cmd:option('-layers',2)
-   cmd:option('-gpu',1)
    cmd:option('-in_size',2)
    cmd:option('-rnn_size',2)
-   cmd:option('-batch_size',2)
+   cmd:option('-load_model',false)
+
+   -- Training
    cmd:option('-max_grad_norm',5)
    cmd:option('-max_epoch',1)
-   cmd:option('-start',0)
    cmd:option('-anneal',true)
    cmd:option('-anneal_after',10)
    cmd:option('-decay',2)
    cmd:option('-weight_init',.1)
    cmd:option('-lr',0.7)
    cmd:option('-freq_floor',6)
-   cmd:option('-data_dir','/deep/group/speech/asamar/nlp/data/penn/pennSplit/')
+   cmd:option('-start',0)
+   cmd:option('-test',false)
+   cmd:option('-train',true)
+   cmd:option('-gpu',1)
+   cmd:option('-stats',false)
+
+   -- Data
+   cmd:option('-auto',false) --autoencoder style (i.e. share lookup tables)
+   cmd:option('-batch_size',2)
+   cmd:option('-data_dir','/deep/group/speech/asamar/nlp/data/test/')
    cmd:option('-enc_train_file','enc_train.txt')
    cmd:option('-dec_train_file','dec_train.txt')
    cmd:option('-enc_test_file','enc_test.txt')
    cmd:option('-dec_test_file','dec_test.txt')
    cmd:option('-glove',false)
    cmd:option('-glove_file','/deep/group/speech/asamar/nlp/glove/pretrained/glove.840B.300d.txt')
-   cmd:option('-run_dir','/deep/group/speech/asamar/nlp/seq/penn/')
-   cmd:option('-load_model',false)
+   cmd:option('-run_dir','/deep/group/speech/asamar/nlp/seq/test/')
    cmd:option('-parser','penn')
-   cmd:option('-test',false)
-   cmd:option('-train',true)
-   cmd:option('-stats',false)
-   cmd:option('-auto',false)
+
+
    local opts = cmd:parse(arg)
    opts.decode_dir = opts.run_dir .. '/decode/'
    opts.enc_train_file = opts.data_dir .. opts.enc_train_file
@@ -500,13 +454,14 @@ function run()
    print("\27[31mStarting Experiment\n---------------")
    opts = getOpts()
    g_init_gpu({opts.gpu})
-   makeDirectories()
+   g_make_run_dir(opts)
    print(opts)
    print("Saving Options")
    torch.save(paths.concat(opts.run_dir,'opts.th7'),opts)
 
+   -- Plot Err
    if opts.stats then
-      plotErr(opts.run_dir .. 'model.th7')
+      g_plot_err(opts.run_dir .. 'model.th7')
       return
    end
 
@@ -516,8 +471,6 @@ function run()
    if opts.auto then
       dec_data = enc_data
    end
-   print(enc_data.index)
-   print(enc_data.lookup)
 
    -- Network
    print("\27[31mCreating Network\n----------------")
@@ -525,7 +478,7 @@ function run()
    setupEncoder()
    print("Setting up Decoder")
    setupDecoder()
-   stats = {}
+   local stats = {}
    stats.train = {avg_dec_err_epoch = {}}
    stats.test = {avg_dec_err_epoch = {}}
    if opts.load_model then 
@@ -548,14 +501,7 @@ function run()
       for _,test in ipairs(test_options) do
          -- Setup
          local iter = 0
-         stats.train.avg_enc_err = 0
-         stats.train.avg_dec_err = 0
-         stats.train.dec_err = 0
-         stats.train.enc_err = 0
-         stats.test.avg_enc_err = 0
-         stats.test.avg_dec_err = 0
-         stats.test.dec_err = 0
-         stats.test.enc_err = 0
+         g_reset_stats(stats)
 
          -- Anneal
          if opts.anneal and (epoch + opts.start) > opts.anneal_after then
@@ -563,7 +509,6 @@ function run()
          end
 
          -- Open Data
-
          local enc_f
          local dec_f
 
@@ -579,9 +524,9 @@ function run()
          
          while true do
 
-            -- Read in Batch Size
+            -- Read in Data
             iter = iter + 1
-            model.output = {}
+            dec_output = {}
             local enc_line = {}
             local dec_line = {}
             while #enc_line < opts.batch_size do
@@ -594,27 +539,27 @@ function run()
 
             if #enc_line == 0 then break end
 
-            -- Initialize Matrices
-            enc_x, enc_y, dec_x, dec_y, batch = {}, {}, {}, {}, {}
-            initializeBatch(#enc_line)
-            initializeEncMat()
-            initializeDecMat()
+            -- Initialize Matrices and Batch Struct
+            local batch = g_initialize_batch(#enc_line)
+            local enc_x, enc_y = g_initialize_mat(enc_data.len_max,
+                                           enc_data.default_index, opts, batch)
+            local dec_x, dec_y = g_initialize_mat(dec_data.len_max,
+                                            dec_data.default_index, opts, batch)
 
             collectgarbage()
 
             -- Load Matrices and Line Lengths
-            batch.enc_len_max = 0
-            batch.dec_len_max = 0
-            batch.dec_line_length = {}
-            batch.enc_line_length = {}
-            load(enc_line, dec_line)
+            load(enc_x, enc_y, enc_line, dec_x, dec_y, dec_line, batch)
 
             -- Forward and Backward Prop
             print(enc_line)
             fp(enc_x,enc_y,dec_x,dec_y,batch,test)
             bp(enc_x,enc_y,dec_x,dec_y,batch,test)
-            log(epoch,iter,test)
+
+            -- Log and Decode
+            log(epoch,iter,test,stats,batch)
             decode(epoch,iter,batch,enc_line,dec_line,test,opts)
+
             if batch.size ~= opts.batch_size then
                break
             end
@@ -623,7 +568,7 @@ function run()
          enc_f:close()
          dec_f:close()
 
-         -- Saving
+         -- Save Model
          torch.save(opts.run_dir .. '/model.th7', 
                     {params, epoch + opts.start, opts.lr, stats})
       end         

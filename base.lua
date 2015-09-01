@@ -1,31 +1,9 @@
---  Copyright (c) 2014, Facebook, Inc.
---  All rights reserved.
---  This source code is licensed under the Apache 2 license found in the
---  LICENSE file in the root directory of this source tree. 
+--  Copyright (c) 2015 Anshul Samar
+--  Copyright (c) 2014, Facebook, Inc. All rights reserved.
+--  Licensed under the Apache License, Version 2.0 found in main folder
+--  See original LSTM/LM code: github.com/wojzaremba/lstm
 
-function g_disable_dropout(node)
-  if type(node) == "table" and node.__typename == nil then
-    for i = 1, #node do
-      node[i]:apply(g_disable_dropout)
-    end
-    return
-  end
-  if string.match(node.__typename, "Dropout") then
-    node.train = false
-  end
-end
-
-function g_enable_dropout(node)
-  if type(node) == "table" and node.__typename == nil then
-    for i = 1, #node do
-      node[i]:apply(g_enable_dropout)
-    end
-    return
-  end
-  if string.match(node.__typename, "Dropout") then
-    node.train = true
-  end
-end
+require 'gnuplot'
 
 function g_cloneManyTimes(net, T)
   local clones = {}
@@ -71,10 +49,76 @@ function g_replace_table(to, from)
   end
 end
 
-function g_f3(f)
-  return string.format("%.3f", f)
+function g_plot_err(model_file)
+   if stats == nil then
+      local oldModel = torch.load(modelFile)
+      stats = oldModel[4]
+   end
+   print('Train Avg Dec Err')
+   print(stats.train.avg_dec_err_epoch)
+   print('Test Avg Dec Err')
+   print(stats.test.avg_dec_err_epoch)
+   gnuplot.plot({torch.Tensor(stats.train.avg_dec_err_epoch)},
+                {torch.Tensor(stats.test.avg_dec_err_epoch)})
+   gnuplot.title('Average Decoder Error vs Epochs')
+   gnuplot.xlabel('Epoch')
+   gnuplot.ylabel('Negative Log Likelihood')
 end
 
-function g_d(f)
-  return string.format("%d", torch.round(f))
+function g_initialize_batch(size)
+   local batch = {}
+   batch.size = size
+   batch.enc_lengths = torch.zeros(size)
+   batch.dec_lengths = torch.zeros(size)
+   batch.enc_len_max = 0
+   batch.dec_len_max = 0
+   batch.dec_line_length = {}
+   batch.enc_line_length = {}
+   return batch
 end
+
+function g_initialize_mat(len_max, default_index, opts)
+   local x = {}
+   local y = {}
+
+   for i=1,len_max do
+      local x_init = torch.ones(opts.batch_size) * default_index
+      table.insert(x,transfer_data(x_init))
+      table.insert(y,transfer_data(torch.zeros(opts.batch_size)))
+   end
+   return x, y
+end
+
+function g_make_run_dir(opts)
+   if paths.dir(opts.run_dir) == nil then
+      paths.mkdir(opts.run_dir)
+      paths.mkdir(opts.decode_dir)
+   end
+end
+
+function g_reset_s(state, len_max, opts)
+   for j = 0, len_max do
+      for d = 1, 2 * opts.layers do
+         state[j][d]:zero()
+      end
+   end
+end
+
+function g_reset_ds(ds, opts)
+   for d = 1, 2 * opts.layers do
+      ds[d]:zero()
+   end
+end
+
+function g_reset_stats(stats)
+   stats.train.avg_enc_err = 0
+   stats.train.avg_dec_err = 0
+   stats.train.dec_err = 0
+   stats.train.enc_err = 0
+   stats.test.avg_enc_err = 0
+   stats.test.avg_dec_err = 0
+   stats.test.dec_err = 0
+   stats.test.enc_err = 0
+end
+
+

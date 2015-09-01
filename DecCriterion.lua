@@ -13,7 +13,7 @@ end
 
 
 function DecCriterion:updateOutput(input, target)
-   table.insert(model.output,torch.exp(input))
+   table.insert(dec_output,torch.exp(input))
    --print(target)
    --print(input)
    --print(torch.exp(input))
