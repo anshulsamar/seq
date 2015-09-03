@@ -9,13 +9,14 @@ require 'nn'
 require 'nngraph'
 require 'cutorch'
 require 'cunn'
-require 'EncCriterion'
-require 'DecCriterion'
-require 'base'
-require 'dataLoader'
-require 'reload'
 require 'paths'
 require 'math'
+require 'criterion/EncCriterion'
+require 'criterion/DecCriterion'
+require 'utils/base'
+require 'utils/reload'
+require 'dataLoader'
+
 
 -- Global Data Structures
 -- ---------------------
