@@ -14,7 +14,6 @@ require 'math'
 require 'criterion/EncCriterion'
 require 'criterion/DecCriterion'
 require 'utils/base'
-require 'utils/reload'
 require 'dataLoader'
 
 
@@ -36,15 +35,15 @@ function transfer_data(x)
    return x:cuda()
 end
 
-local function lstm(x, prev_c, prev_h)
+local function lstm(x, prev_c, prev_h, in_size, rnn_size)
    -- Calculate four gates together (rows of x are individual examples)
-   local i2h = nn.Linear(opts.in_size, 4*opts.rnn_size)(x)
-   local h2h = nn.Linear(opts.rnn_size,4*opts.rnn_size)(prev_h)
+   local i2h = nn.Linear(in_size, 4*rnn_size)(x)
+   local h2h = nn.Linear(rnn_size,4*rnn_size)(prev_h)
    local gates = nn.CAddTable()({i2h,h2h})
 
-   -- Reshape to (batch_size, 4, opts.rnn_size)
+   -- Reshape to (batch_size, 4, rnn_size)
    -- Slice by gate, each row corresponds to example
-   local reshaped_gates = nn.Reshape(4,opts.rnn_size)(gates)
+   local reshaped_gates = nn.Reshape(4,rnn_size)(gates)
    local sliced_gates = nn.SplitTable(2)(reshaped_gates)
 
    -- LSTM memory cell
@@ -62,11 +61,12 @@ local function lstm(x, prev_c, prev_h)
    return next_c, next_h
 end
 
-local function create_network(criterion,lookup,lookup_size,vocab_size)
+local function create_network(criterion,lookup,lookup_size,vocab_size,
+                             in_size, rnn_size)
    local x = nn.Identity()()
    local y = nn.Identity()()
    local prev_s = nn.Identity()()
-   LookupTable = nn.LookupTable(lookup_size,opts.in_size)
+   LookupTable = nn.LookupTable(lookup_size,in_size)
    g_replace_table({LookupTable:parameters()[1]},{lookup})
    local i = {[0] = LookupTable(x)}
    local next_s = {}
@@ -75,12 +75,19 @@ local function create_network(criterion,lookup,lookup_size,vocab_size)
    for layer_idx = 1, opts.layers do
       local prev_c = split[2 * layer_idx - 1]
       local prev_h = split[2 * layer_idx]
-      local next_c, next_h = lstm(i[layer_idx-1], prev_c, prev_h)
+      local next_c, next_h
+      if layer_idx == 1 then
+         next_c, next_h = lstm(i[layer_idx-1], prev_c, prev_h, 
+                                  in_size,rnn_size)
+      else
+         next_c, next_h = lstm(i[layer_idx-1], prev_c, prev_h, 
+                                  rnn_size,rnn_size)
+      end
       table.insert(next_s, next_c)
       table.insert(next_s, next_h)
       i[layer_idx] = next_h
    end
-   local h2y = nn.Linear(opts.rnn_size, vocab_size)
+   local h2y = nn.Linear(rnn_size, vocab_size)
    local pred = nn.LogSoftMax()(h2y(i[opts.layers]))
    local err = criterion()({pred, y})
    local module = nn.gModule({x, y, prev_s},{err, nn.Identity()(next_s)})
@@ -91,7 +98,8 @@ end
 
 local function setupEncoder()
    local encoder = create_network(EncCriterion,enc_data.lookup,
-                            enc_data.lookup_size,enc_data.vocab_size)
+                            enc_data.lookup_size,enc_data.vocab_size,
+                            opts.enc_in_size, opts.enc_rnn_size)
    params.encoderx, params.encoderdx = encoder:getParameters()
    model.encoder = g_cloneManyTimes(encoder, enc_data.len_max)
    model.enc_s = {}
@@ -99,12 +107,12 @@ local function setupEncoder()
    for j = 0, enc_data.len_max do
       model.enc_s[j] = {}
       for d = 1, 2 * opts.layers do
-         local outputStates = torch.zeros(opts.batch_size,opts.rnn_size)
+         local outputStates = torch.zeros(opts.batch_size,opts.enc_rnn_size)
          model.enc_s[j][d] = transfer_data(outputStates)
       end
    end
    for d = 1, 2 * opts.layers do
-      local deltas = torch.zeros(opts.batch_size,opts.rnn_size)
+      local deltas = torch.zeros(opts.batch_size,opts.enc_rnn_size)
       model.enc_ds[d] = transfer_data(deltas)
    end
    model.enc_norm_dw = 0
@@ -113,7 +121,8 @@ end
 
 local function setupDecoder()
    local decoder = create_network(DecCriterion,dec_data.lookup,
-                            dec_data.lookup_size,dec_data.vocab_size)
+                            dec_data.lookup_size,dec_data.vocab_size,
+                            opts.dec_in_size, opts.dec_rnn_size)
    params.decoderx, params.decoderdx = decoder:getParameters()
    model.decoder = g_cloneManyTimes(decoder, dec_data.len_max)
    model.dec_s = {}
@@ -121,19 +130,19 @@ local function setupDecoder()
    for j = 0, dec_data.len_max do
       model.dec_s[j] = {}
       for d = 1, 2 * opts.layers do
-         local outputStates = torch.zeros(opts.batch_size,opts.rnn_size)
+         local outputStates = torch.zeros(opts.batch_size,opts.dec_rnn_size)
          model.dec_s[j][d] = transfer_data(outputStates)
       end
    end
    for d = 1, 2 * opts.layers do
-      local deltas = torch.zeros(opts.batch_size,opts.rnn_size)
+      local deltas = torch.zeros(opts.batch_size,opts.dec_rnn_size)
       model.dec_ds[d] = transfer_data(deltas)
    end
    model.dec_norm_dw = 0
    model.dec_err = transfer_data(torch.zeros(dec_data.len_max))
 end
 
-local function fpSeq(x, y, batch_len_max, line_length, num_examples, state, err, net, test, dec)
+local function fpSeq(x, y, batch_len_max, line_length, num_examples, state, err, net, test, system)
 
    if test then
       local x_init = torch.ones(opts.batch_size) * dec_data.default_index
@@ -144,7 +153,7 @@ local function fpSeq(x, y, batch_len_max, line_length, num_examples, state, err,
    for i = 1, batch_len_max do
       local s = state[i - 1]
       ret = net[i]:forward({x[i], y[i], s})
-      if test and dec then -- and i < batch_len_max then
+      if test and system == 'decoder' then -- and i < batch_len_max then
          local _, ind = torch.max(dec_output[i],2)
          table.insert(x,ind:select(2,1))
       end
@@ -176,7 +185,7 @@ local function fp(enc_x, enc_y, dec_x, dec_y, batch, test)
 
 
    fpSeq(enc_x,enc_y,batch.enc_len_max, batch.enc_line_length, batch.size, 
-         model.enc_s, model.enc_err, model.encoder, test, false)
+         model.enc_s, model.enc_err, model.encoder, test, 'encoder')
 
    for j = 1, batch.size do
       for d = 1, 2 * opts.layers do
@@ -185,16 +194,16 @@ local function fp(enc_x, enc_y, dec_x, dec_y, batch, test)
    end
 
    fpSeq(dec_x, dec_y,batch.dec_len_max, batch.dec_line_length, batch.size, 
-      model.dec_s, model.dec_err, model.decoder, test, true)
+      model.dec_s, model.dec_err, model.decoder, test, 'decoder')
 end
 
 
-local function bpSeq(x, y, batch_len_max, num_examples, line_length, state, ds, net, grad, dec)
+local function bpSeq(x, y, batch_len_max, num_examples, line_length, state, ds, net, grad, system)
 
    grad:zero()
    for i = batch_len_max, 1, -1 do
 
-      if dec == false then
+      if system == 'encoder' then
          for j = 1, num_examples do
             if line_length[j] == i then
                for d = 1, 2 * opts.layers do
@@ -235,14 +244,14 @@ local function bp(enc_x,enc_y,dec_x,dec_y,batch,test)
    grad = bpSeq(dec_x, dec_y, 
                 batch.dec_len_max, batch.size, batch.dec_line_length, 
                 model.dec_s, model.dec_ds, model.decoder, 
-                params.decoderdx, true)
+                params.decoderdx, 'decoder')
    model.dec_norm_dw = grad:norm()
    params.decoderx:add(grad:mul(-opts.lr))
 
    grad = bpSeq(enc_x, enc_y, 
                 batch.enc_len_max, batch.size, batch.enc_line_length, 
                 model.enc_s, model.enc_ds, model.encoder, 
-                params.encoderdx, false)
+                params.encoderdx, 'encoder')
    model.enc_norm_dw = grad:norm()
    params.encoderx:add(grad:mul(-opts.lr))
 
@@ -412,8 +421,10 @@ local function getOpts()
 
    -- Network
    cmd:option('-layers',2)
-   cmd:option('-in_size',300)
-   cmd:option('-rnn_size',300)
+   cmd:option('-enc_in_size',100)
+   cmd:option('-enc_rnn_size',200)
+   cmd:option('-dec_in_size',100)
+   cmd:option('-dec_rnn_size',200)
    cmd:option('-load_model',false)
 
    -- Training
