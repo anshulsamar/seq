@@ -1,6 +1,5 @@
 require 'io'
 require 'torch'
-require 'reload'
 require 'paths'
 
 local modname = ...
@@ -156,7 +155,7 @@ function M.get(opts)
    enc_d.saved_glove_file = opts.run_dir .. '/gloveEnc.th7'
    enc_d.saved_vocab_file = opts.run_dir .. '/vocabEnc.th7'
    enc_d.saved_lookup_file = opts.run_dir .. '/lookupEnc.th7'
-   enc_d.dim = opts.in_size
+   enc_d.dim = opts.enc_in_size
    enc_d.index = {}
    enc_d.rev_index = {}
    enc_d.word_emb = {}
@@ -179,7 +178,7 @@ function M.get(opts)
    dec_d.saved_glove_file = opts.run_dir .. '/gloveDec.th7'
    dec_d.saved_vocab_file = opts.run_dir .. '/vocabDec.th7'
    dec_d.saved_lookup_file = opts.run_dir .. '/lookupDec.th7'
-   dec_d.dim = opts.in_size
+   dec_d.dim = opts.dec_in_size
    dec_d.index = {}
    dec_d.rev_index = {}
    dec_d.word_emb = {}
