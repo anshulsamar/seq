@@ -180,9 +180,9 @@ local function fpSeq(x, y, batch_len_max, line_length, num_examples, state, err,
 end
 
 local function fp(enc_x, enc_y, dec_x, dec_y, batch, test)
+
    g_reset_s(model.enc_s,enc_data.len_max,opts)
    g_reset_s(model.dec_s,dec_data.len_max,opts)
-
 
    fpSeq(enc_x,enc_y,batch.enc_len_max, batch.enc_line_length, batch.size, 
          model.enc_s, model.enc_err, model.encoder, test, 'encoder')
@@ -190,6 +190,12 @@ local function fp(enc_x, enc_y, dec_x, dec_y, batch, test)
    for j = 1, batch.size do
       for d = 1, 2 * opts.layers do
          model.dec_s[0][d][j] = model.enc_s[batch.enc_line_length[j]][d][j]
+         if opts.sgvb then
+            local eps = torch.normal(0,1)
+            local input = model.enc_s[batch.enc_line_length[j]][d][j]
+            local mu = input:split(opts.enc_rnn_size/2,2)[1]
+            local sigma = input:split(opts.enc_rnn_size/2,2)[2]
+            local z = mu + sigma:cmul(eps)
       end
    end
 
@@ -428,6 +434,7 @@ local function getOpts()
    cmd:option('-load_model',false)
 
    -- Training
+   cmd:option('-sgvb',false)
    cmd:option('-max_grad_norm',5)
    cmd:option('-max_epoch',15)
    cmd:option('-anneal',true)
