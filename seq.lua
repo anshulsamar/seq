@@ -197,10 +197,12 @@ local function fp(enc_x, enc_y, dec_x, dec_y, batch, test)
    for k = 1, batch.size do
       for d = 1, 2 * opts.layers do
          if opts.sgvb then
-            local input = model.enc_s[batch.enc_line_length[k]][d][k]
-            local inputReshape = torch.reshape(input,2,opts.enc_rnn_size/2)
-            local mu = inputReshape[1]
-            local sigma = inputReshape[2]
+            local out = model.enc_s[batch.enc_line_length[k]][d][k]
+            local outReshape = torch.reshape(out,2,opts.enc_rnn_size/2)
+            local lsm = outReshape[1]
+            local mu = torch.pow(torch.exp(lsm),1/2)
+            local lss = outReshape[2]
+            local sigma = torch.pow(torch.exp(lss),1/2)
             model.eps[k] = torch.normal(0,1)
             local z = mu + (sigma * model.eps[k])
             model.dec_s[0][d][k] = z
@@ -225,17 +227,17 @@ local function bpSeq(x, y, batch_len_max, num_examples, line_length, state, ds, 
             if line_length[k] == i then
                for d = 1, 2 * opts.layers do
                   if opts.sgvb then
-                     local input = state[line_length[k]][d][k]
+                     local out = state[line_length[k]][d][k]
                      local zDim = opts.enc_rnn_size/2
-                     local inputReshape = torch.reshape(input,2,zDim)
-                     local mu = inputReshape[1]:double()
-                     local muNLL = model.dec_ds[d][k]:double()
-                     local muKL = mu * -2
+                     local outReshape = torch.reshape(out,2,zDim)
+                     local mu = outReshape[1]
+                     local lss = outReshape[2]
 
-                     local sigma = inputReshape[2]:double()
-                     local sigNLL = (model.dec_ds[d][k] * model.eps[k]):double()
-                     local sigKL = (sigma * -2) + torch.cdiv(torch.ones(zDim),sigma)
-                     ds[d][k] = torch.cat(muNLL + muKL, sigNLL + sigKL):cuda()
+                     local muNLL = model.dec_ds[d][k]
+                     local muKL = torch.cmul(model.dec_ds[d][k], torch.exp(mu * 1/2)) * (1/2)
+                     local lssNLL = torch.cmul(model.dec_ds[d][k] * (model.eps[k]/2), (torch.exp(lss * 1/2)))
+                     local lssKL = torch.exp(lss)*(-1) + torch.ones(zDim):cuda()
+                     ds[d][k] = transfer_data(torch.cat(muNLL:double() + muKL:double(), lssNLL:double() + lssNLL:double()))
 
                   else
                      ds[d][k] = model.dec_ds[d][k]
@@ -259,6 +261,8 @@ local function bpSeq(x, y, batch_len_max, num_examples, line_length, state, ds, 
       cutorch.synchronize()
    end
 
+   --print(system .. 'norm: ' .. grad:norm())
+   
    if grad:norm() > opts.max_grad_norm then
       local shrink_factor = opts.max_grad_norm/grad:norm()
       grad:mul(shrink_factor)
@@ -327,8 +331,8 @@ local function log(epoch, iter, test, stats, batch)
          ', avg_enc_err=' .. string.format('%.2f',st.avg_enc_err) ..
          ', dec_err=' .. string.format('%.2f',st.dec_err) .. 
          ', avg_dec_err=' .. string.format('%.2f',st.avg_dec_err) ..
-         ', encdxNorm=' .. string.format('%.4f',model.enc_norm_dw) ..
-         ', decdxNorm=' .. string.format('%.4f',model.dec_norm_dw) .. 
+         ', encdxNorm=' .. string.format('%.2f',model.enc_norm_dw) ..
+         ', decdxNorm=' .. string.format('%.2f',model.dec_norm_dw) .. 
          ', lr=' ..  string.format('%.3f',opts.lr))
 
    st.avg_dec_err_epoch[epoch] = st.avg_dec_err
