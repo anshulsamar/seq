@@ -104,6 +104,8 @@ local function setupEncoder()
    model.encoder = g_cloneManyTimes(encoder, enc_data.len_max)
    model.enc_s = {}
    model.enc_ds = {}
+
+   -- start from 0 as model.enc_s[1] needs prev state too
    for j = 0, enc_data.len_max do
       model.enc_s[j] = {}
       for d = 1, 2 * opts.layers do
@@ -127,6 +129,10 @@ local function setupDecoder()
    model.decoder = g_cloneManyTimes(decoder, dec_data.len_max)
    model.dec_s = {}
    model.dec_ds = {}
+   if opts.sgvb then
+      model.eps = {}
+   end
+
    for j = 0, dec_data.len_max do
       model.dec_s[j] = {}
       for d = 1, 2 * opts.layers do
@@ -142,6 +148,7 @@ local function setupDecoder()
    model.dec_err = transfer_data(torch.zeros(dec_data.len_max))
 end
 
+
 local function fpSeq(x, y, batch_len_max, line_length, num_examples, state, err, net, test, system)
 
    if test then
@@ -153,7 +160,7 @@ local function fpSeq(x, y, batch_len_max, line_length, num_examples, state, err,
    for i = 1, batch_len_max do
       local s = state[i - 1]
       ret = net[i]:forward({x[i], y[i], s})
-      if test and system == 'decoder' then -- and i < batch_len_max then
+      if test and system == 'decoder' then
          local _, ind = torch.max(dec_output[i],2)
          table.insert(x,ind:select(2,1))
       end
@@ -187,15 +194,19 @@ local function fp(enc_x, enc_y, dec_x, dec_y, batch, test)
    fpSeq(enc_x,enc_y,batch.enc_len_max, batch.enc_line_length, batch.size, 
          model.enc_s, model.enc_err, model.encoder, test, 'encoder')
 
-   for j = 1, batch.size do
+   for k = 1, batch.size do
       for d = 1, 2 * opts.layers do
-         model.dec_s[0][d][j] = model.enc_s[batch.enc_line_length[j]][d][j]
          if opts.sgvb then
-            local eps = torch.normal(0,1)
-            local input = model.enc_s[batch.enc_line_length[j]][d][j]
-            local mu = input:split(opts.enc_rnn_size/2,2)[1]
-            local sigma = input:split(opts.enc_rnn_size/2,2)[2]
-            local z = mu + sigma:cmul(eps)
+            local input = model.enc_s[batch.enc_line_length[k]][d][k]
+            local inputReshape = torch.reshape(input,2,opts.enc_rnn_size/2)
+            local mu = inputReshape[1]
+            local sigma = inputReshape[2]
+            model.eps[k] = torch.normal(0,1)
+            local z = mu + (sigma * model.eps[k])
+            model.dec_s[0][d][k] = z
+         else
+            model.dec_s[0][d][k] = model.enc_s[batch.enc_line_length[k]][d][k]
+         end
       end
    end
 
@@ -210,16 +221,31 @@ local function bpSeq(x, y, batch_len_max, num_examples, line_length, state, ds, 
    for i = batch_len_max, 1, -1 do
 
       if system == 'encoder' then
-         for j = 1, num_examples do
-            if line_length[j] == i then
+         for k = 1, num_examples do
+            if line_length[k] == i then
                for d = 1, 2 * opts.layers do
-                  ds[d][j] = model.dec_ds[d][j]
+                  if opts.sgvb then
+                     local input = state[line_length[k]][d][k]
+                     local zDim = opts.enc_rnn_size/2
+                     local inputReshape = torch.reshape(input,2,zDim)
+                     local mu = inputReshape[1]:double()
+                     local muNLL = model.dec_ds[d][k]:double()
+                     local muKL = mu * -2
+
+                     local sigma = inputReshape[2]:double()
+                     local sigNLL = (model.dec_ds[d][k] * model.eps[k]):double()
+                     local sigKL = (sigma * -2) + torch.cdiv(torch.ones(zDim),sigma)
+                     ds[d][k] = torch.cat(muNLL + muKL, sigNLL + sigKL):cuda()
+
+                  else
+                     ds[d][k] = model.dec_ds[d][k]
+                  end
                end
             end
          end
-         for j = num_examples + 1, opts.batch_size do
+         for k = num_examples + 1, opts.batch_size do
             for d = 1, 2 * opts.layers do
-               ds[d][j]:zero()
+               ds[d][k]:zero()
             end
          end
       end
@@ -327,6 +353,14 @@ local function loadModel()
    end
 end
 
+local function initializeEps()
+   for d = 1, 2 * opts.layers do
+      if opts.sgvb then
+         model.eps[d] = transfer_data(torch.zeros(opts.batch_size))
+      end
+   end
+end
+
 local function loadMat(line, index, i, x, y, dec)
    local indexes = {}
    local num_word = 0
@@ -430,7 +464,7 @@ local function getOpts()
    cmd:option('-enc_in_size',100)
    cmd:option('-enc_rnn_size',200)
    cmd:option('-dec_in_size',100)
-   cmd:option('-dec_rnn_size',200)
+   cmd:option('-dec_rnn_size',100)
    cmd:option('-load_model',false)
 
    -- Training
@@ -499,6 +533,8 @@ function run()
    setupEncoder()
    print("Setting up Decoder")
    setupDecoder()
+
+
    local stats = {}
    stats.train = {avg_dec_err_epoch = {}}
    stats.test = {avg_dec_err_epoch = {}}
@@ -566,6 +602,7 @@ function run()
                                      enc_data.default_index, opts, batch)
             local dec_x, dec_y = g_initialize_mat(dec_data.len_max,
                                      dec_data.default_index, opts, batch)       
+            initializeEps()
 
             collectgarbage()
 
