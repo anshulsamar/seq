@@ -158,6 +158,7 @@ local function setupSGVB()
    model.lss = {}
    model.lsm_s = {}
    model.lss_s = {}
+   model.enc_out = {}
 
    for d = 1, 2 * opts.layers do
       local h1 = nn.Linear(opts.enc_rnn_size, opts.dec_rnn_size)()
@@ -186,6 +187,12 @@ local function setupSGVB()
          model.lsm_s[d] = transfer_data(lsm_state)
          local lss_state = torch.zeros(opts.batch_size,opts.dec_rnn_size)
          model.lss_s[d] = transfer_data(lss_state)
+   end
+
+   for d = 1, 2 * opts.layers do
+      model.enc_out[d] = {}
+      local outputStates = torch.zeros(opts.batch_size,opts.enc_rnn_size)
+      model.enc_out[d] = transfer_data(outputStates)
    end
 
 end
@@ -231,33 +238,45 @@ local function fp(enc_x, enc_y, dec_x, dec_y, batch, test)
 
    g_reset_s(model.enc_s,enc_data.len_max,opts)
    g_reset_s(model.dec_s,dec_data.len_max,opts)
+   g_reset_ds(model.enc_out,opts)
 
    fpSeq(enc_x,enc_y,batch.enc_len_max, batch.enc_line_length, batch.size, 
          model.enc_s, model.enc_err, model.encoder, test, 'encoder')
 
-   for k = 1, batch.size do
+   if opts.sgvb then 
+
       for d = 1, 2 * opts.layers do
-         if opts.sgvb then
-            local input = model.enc_s[batch.enc_line_length[k]][d][k]
-            local lsm = model.lsm[d]:forward(input)
-            local lss = model.lss[d]:forward(input)
-            model.lsm_s[d][k] = lsm
-            model.lss_s[d][k] = lss
+         model.eps[d] = transfer_data(torch.zeros(opts.batch_size,opts.dec_rnn_size))
+         for k = 1, batch.size do
+            model.eps[d][k] = transfer_data(torch.ones(opts.dec_rnn_size) * torch.normal(0,1))
+         end
+      end
 
-            --local out = model.enc_s[batch.enc_line_length[k]][d][k]
-            --local outReshape = torch.reshape(out,2,opts.enc_rnn_size/2)
-            --local lsm = outReshape[1]
-            --local lss = outReshape[2]
+      for k = 1, batch.size do
+         for d = 1, 2 * opts.layers do
+            model.enc_out[d][k] = model.enc_s[batch.enc_line_length[k]][d][k]
+         end
+      end
 
-            local mu = torch.pow(torch.exp(lsm),1/2)
-            local sigma = torch.pow(torch.exp(lss),1/2)
-            model.eps[k] = torch.normal(0,1)
-            local z = mu + (sigma * model.eps[k])
-            model.dec_s[0][d][k] = z
-         else
+      for d = 1, 2 * opts.layers do
+         local input = model.enc_out[d]
+         local lsm = model.lsm[d]:forward(input)
+         local lss = model.lss[d]:forward(input)
+         model.lsm_s[d] = lsm
+         model.lss_s[d] = lss
+         
+         local mu = torch.pow(torch.exp(lsm),1/2)
+         local sigma = torch.pow(torch.exp(lss),1/2)
+         local z = mu + torch.cmul(sigma, model.eps[d])
+         model.dec_s[0][d] = z
+      end
+   else
+      for k = 1, batch.size do
+         for d = 1, 2 * opts.layers do
             model.dec_s[0][d][k] = model.enc_s[batch.enc_line_length[k]][d][k]
          end
       end
+      
    end
 
    fpSeq(dec_x, dec_y,batch.dec_len_max, batch.dec_line_length, batch.size, 
@@ -268,6 +287,23 @@ end
 local function bpSeq(x, y, batch_len_max, num_examples, line_length, state, ds, net, grad, system)
 
    grad:zero()
+   local lsmds = {}
+   local lssds = {}
+
+
+   if system == 'encoder' and opts.sgvb then
+      for d = 1, 2 * opts.layers do
+         local lsmNLL = torch.cmul(model.dec_ds[d], (torch.exp(model.lsm_s[d] * 1/2))) * 1/2
+         local lsmKL = torch.exp(model.lsm_s[d])*(-1)
+         local lssNLL = torch.cmul(torch.cmul(model.dec_ds[d],model.eps[d]),torch.exp(model.lss_s[d] * 1/2)) * 1/2
+         local lssKL = torch.exp(model.lss_s[d])*(-1) + torch.ones(opts.batch_size,opts.dec_rnn_size):cuda()
+         
+         local input = model.enc_out[d]
+         lsmds[d] = model.lsm[d]:backward(input, lsmNLL + lsmKL)
+         lssds[d] = model.lss[d]:backward(input, lssNLL + lssKL)
+      end
+   end
+
    for i = batch_len_max, 1, -1 do
 
       if system == 'encoder' then
@@ -275,27 +311,7 @@ local function bpSeq(x, y, batch_len_max, num_examples, line_length, state, ds, 
             if line_length[k] == i then
                for d = 1, 2 * opts.layers do
                   if opts.sgvb then
-                     --local input = state[line_length[k]][d][k]
-                     --local zDim = opts.enc_rnn_size/2
-                     --local inputReshape = torch.reshape(input,2,zDim)
-                     --local mu = inputReshape[1]
-                     --local lss = inputReshape[2]
-                     --local muNLL = torch.cmul(model.dec_ds[d][k] * (1/2), (torch.exp(lss * 1/2)))
-                     --local muKL = torch.cmul(model.dec_ds[d][k], torch.exp(mu * 1/2)) * (1/2)
-                     --local lssNLL = torch.cmul(model.dec_ds[d][k] * (model.eps[k]/2), (torch.exp(lss * 1/2)))
-                     --local lssKL = torch.exp(lss)*(-1) + torch.ones(zDim):cuda()
-
-                     local lsmNLL = torch.cmul(model.dec_ds[d][k] * (1/2), (torch.exp(model.lsm_s[d][k] * 1/2)))
-                     local lsmKL = torch.exp(model.lsm_s[d][k])*(-1)
-                     local lssNLL = torch.cmul(model.dec_ds[d][k] * (model.eps[k]/2), (torch.exp(model.lss_s[d][k] * 1/2)))
-                     local lssKL = torch.exp(model.lss_s[d][k])*(-1) + torch.ones(opts.dec_rnn_size):cuda()
-                     
-                     local input = state[line_length[k]][d][k]
-                     local lsmds = model.lsm[d]:backward(input, lsmNLL + lsmKL)
-                     local lssds = model.lss[d]:backward(input, lssNLL + lssKL)
-                     ds[d][k] = lsmds + lssds
-
-                     --ds[d][k] = transfer_data(torch.cat(muNLL:double() + muKL:double(), lssNLL:double() + lssNLL:double()))
+                     ds[d][k] = lsmds[d][k] + lssds[d][k]
                   else
                      ds[d][k] = model.dec_ds[d][k]
                   end
@@ -530,11 +546,11 @@ local function getOpts()
    local cmd = torch.CmdLine()
 
    -- Network
-   cmd:option('-layers',2)
-   cmd:option('-enc_in_size',100)
-   cmd:option('-enc_rnn_size',200)
-   cmd:option('-dec_in_size',100)
-   cmd:option('-dec_rnn_size',100)
+   cmd:option('-layers',1)
+   cmd:option('-enc_in_size',1)
+   cmd:option('-enc_rnn_size',2)
+   cmd:option('-dec_in_size',1)
+   cmd:option('-dec_rnn_size',1)
    cmd:option('-load_model',false)
 
    -- Training
@@ -555,7 +571,7 @@ local function getOpts()
 
    -- Data
    cmd:option('-share',true) -- share data and lookup table b/w enc/dec
-   cmd:option('-batch_size',96)
+   cmd:option('-batch_size',1)
    cmd:option('-data_dir','/deep/group/speech/asamar/nlp/data/numbers/')
    cmd:option('-enc_train_file','enc_train.txt')
    cmd:option('-dec_train_file','dec_train.txt')
@@ -675,7 +691,6 @@ function run()
                                      enc_data.default_index, opts, batch)
             local dec_x, dec_y = g_initialize_mat(dec_data.len_max,
                                      dec_data.default_index, opts, batch)       
-            initializeEps()
 
             collectgarbage()
 
