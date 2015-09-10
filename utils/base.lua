@@ -2,6 +2,7 @@
 --  Copyright (c) 2014, Facebook, Inc. All rights reserved.
 --  Licensed under the Apache License, Version 2.0 found in main folder
 --  See original LSTM/LM code: github.com/wojzaremba/lstm
+--  g_print method from Benjamin Marechal
 
 require 'gnuplot'
 
@@ -121,5 +122,14 @@ function g_reset_stats(stats)
    stats.test.dec_err = 0
    stats.test.enc_err = 0
 end
+
+function g_print(mlp)
+   for indexNode, node in ipairs(mlp.forwardnodes) do
+      if node.data.module then
+         print(node.data.module)
+      end
+   end
+end
+
 
 

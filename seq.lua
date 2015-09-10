@@ -161,25 +161,25 @@ local function setupSGVB()
    model.enc_out = {}
 
    for d = 1, 2 * opts.layers do
-      local h1 = nn.Linear(opts.enc_rnn_size, opts.dec_rnn_size)()
-      local h2 = nn.Log()(h1)
+      local h1 = nn.Identity()()
+      local h2 = nn.Linear(opts.enc_rnn_size, opts.dec_rnn_size)(h1)
       local mlp = nn.gModule({h1}, {h2})
       mlp:getParameters():uniform(-opts.weight_init, opts.weight_init)
       model.lsm[d] = transfer_data(mlp)
       local x, dx = model.lsm[d]:getParameters()
-      table.insert(params.lsmx, x)
-      table.insert(params.lsmdx, dx)
+      params.lsmx[d] = x
+      params.lsmdx[d] = dx
    end
 
    for d = 1, 2 * opts.layers do
-      local h1 = nn.Linear(opts.enc_rnn_size, opts.dec_rnn_size)()
-      local h2 = nn.Log()(h1)
+      local h1 = nn.Identity()()
+      local h2 = nn.Linear(opts.enc_rnn_size, opts.dec_rnn_size)(h1)
       local mlp = nn.gModule({h1}, {h2})
       mlp:getParameters():uniform(-opts.weight_init, opts.weight_init)
       model.lss[d] = transfer_data(mlp)
       local x, dx = model.lss[d]:getParameters()
-      table.insert(params.lssx, x)
-      table.insert(params.lssdx, dx)
+      params.lssx[d] = x
+      params.lssdx[d] = dx
    end
 
    for d = 1, 2 * opts.layers do
@@ -215,6 +215,7 @@ local function fpSeq(x, y, batch_len_max, line_length, num_examples, state, err,
 
       err[i] = ret[1]
       state[i] = ret[2]
+
       for j = 1, num_examples do
          if i > line_length[j]  then
             for d = 1, 2 * opts.layers do
@@ -228,10 +229,7 @@ local function fpSeq(x, y, batch_len_max, line_length, num_examples, state, err,
             state[i][d][j]:zero()
          end
       end
-
    end
-
-
 end
 
 local function fp(enc_x, enc_y, dec_x, dec_y, batch, test)
@@ -257,17 +255,21 @@ local function fp(enc_x, enc_y, dec_x, dec_y, batch, test)
             model.enc_out[d][k] = model.enc_s[batch.enc_line_length[k]][d][k]
          end
       end
-
       for d = 1, 2 * opts.layers do
          local input = model.enc_out[d]
+         print(input)
          local lsm = model.lsm[d]:forward(input)
+         print(model.lsm[d]:getParameters())
          local lss = model.lss[d]:forward(input)
          model.lsm_s[d] = lsm
          model.lss_s[d] = lss
          
-         local mu = torch.pow(torch.exp(lsm),1/2)
-         local sigma = torch.pow(torch.exp(lss),1/2)
+         local mu = lsm --torch.pow(torch.exp(lsm),1/2)
+         local sigma = torch.exp(lss * 1/2)
          local z = mu + torch.cmul(sigma, model.eps[d])
+         print(mu)
+         print(sigma)
+         print(z)
          model.dec_s[0][d] = z
       end
    else
@@ -290,18 +292,25 @@ local function bpSeq(x, y, batch_len_max, num_examples, line_length, state, ds, 
    local lsmds = {}
    local lssds = {}
 
-
    if system == 'encoder' and opts.sgvb then
       for d = 1, 2 * opts.layers do
-         local lsmNLL = torch.cmul(model.dec_ds[d], (torch.exp(model.lsm_s[d] * 1/2))) * 1/2
-         local lsmKL = torch.exp(model.lsm_s[d])*(-1)
+         params.lsmdx[d]:zero()
+         params.lssdx[d]:zero()
+         local lsmNLL = torch.ones(opts.batch_size,opts.dec_rnn_size):cuda()
+         -- local lsmNLL = torch.cmul(model.dec_ds[d], (torch.exp(model.lsm_s[d] * 1/2))) * 1/2
+         local lsmKL = model.lsm_s[d] * -2 --torch.exp(model.lsm_s[d])*(-1)
          local lssNLL = torch.cmul(torch.cmul(model.dec_ds[d],model.eps[d]),torch.exp(model.lss_s[d] * 1/2)) * 1/2
          local lssKL = torch.exp(model.lss_s[d])*(-1) + torch.ones(opts.batch_size,opts.dec_rnn_size):cuda()
-         
          local input = model.enc_out[d]
+         if d == 1 then
+            --print(input)
+            --print(lsmNLL + lsmKL)
+         end
          lsmds[d] = model.lsm[d]:backward(input, lsmNLL + lsmKL)
          lssds[d] = model.lss[d]:backward(input, lssNLL + lssKL)
       end
+      --print(lsmds[1])
+
    end
 
    for i = batch_len_max, 1, -1 do
@@ -363,6 +372,7 @@ local function bp(enc_x,enc_y,dec_x,dec_y,batch,test)
                 params.encoderdx, 'encoder')
    model.enc_norm_dw = grad:norm()
    params.encoderx:add(grad:mul(-opts.lr))
+   --print(params.lsmdx[1])
 
    for d = 1, 2 * opts.layers do
       params.lsmx[d]:add(params.lsmdx[d]:mul(-opts.lr))
@@ -546,6 +556,7 @@ local function getOpts()
    local cmd = torch.CmdLine()
 
    -- Network
+   torch.manualSeed(1)
    cmd:option('-layers',1)
    cmd:option('-enc_in_size',1)
    cmd:option('-enc_rnn_size',2)
