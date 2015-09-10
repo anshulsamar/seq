@@ -35,6 +35,10 @@ function transfer_data(x)
    return x:cuda()
 end
 
+local function between()
+
+   for layer_idx = 1, opts.layers do
+
 local function lstm(x, prev_c, prev_h, in_size, rnn_size)
    -- Calculate four gates together (rows of x are individual examples)
    local i2h = nn.Linear(in_size, 4*rnn_size)(x)
@@ -197,11 +201,19 @@ local function fp(enc_x, enc_y, dec_x, dec_y, batch, test)
    for k = 1, batch.size do
       for d = 1, 2 * opts.layers do
          if opts.sgvb then
-            local out = model.enc_s[batch.enc_line_length[k]][d][k]
-            local outReshape = torch.reshape(out,2,opts.enc_rnn_size/2)
-            local lsm = outReshape[1]
+            if opts.sgvb2 then
+               local input = model.enc_s[batch.enc_line_length[k]][d][k]
+               local lsm = model.lsm[d]:forward(input)
+               local lss = model.lss[d]:forward(input)
+               model.lsm[d][k] = lsm
+               model.lss[d][k] = lss
+            else
+               local out = model.enc_s[batch.enc_line_length[k]][d][k]
+               local outReshape = torch.reshape(out,2,opts.enc_rnn_size/2)
+               local lsm = outReshape[1]
+               local lss = outReshape[2]
+            end
             local mu = torch.pow(torch.exp(lsm),1/2)
-            local lss = outReshape[2]
             local sigma = torch.pow(torch.exp(lss),1/2)
             model.eps[k] = torch.normal(0,1)
             local z = mu + (sigma * model.eps[k])
@@ -227,18 +239,31 @@ local function bpSeq(x, y, batch_len_max, num_examples, line_length, state, ds, 
             if line_length[k] == i then
                for d = 1, 2 * opts.layers do
                   if opts.sgvb then
-                     local out = state[line_length[k]][d][k]
+                     local input = state[line_length[k]][d][k]
                      local zDim = opts.enc_rnn_size/2
-                     local outReshape = torch.reshape(out,2,zDim)
-                     local mu = outReshape[1]
-                     local lss = outReshape[2]
-
-                     local muNLL = model.dec_ds[d][k]
+                     local inputReshape = torch.reshape(input,2,zDim)
+                     local mu = inputReshape[1]
+                     local lss = inputReshape[2]
+                     --local muNLL = model.dec_ds[d][k]
+                     local muNLL = torch.cmul(model.dec_ds[d][k] * (1/2), (torch.exp(lss * 1/2)))
                      local muKL = torch.cmul(model.dec_ds[d][k], torch.exp(mu * 1/2)) * (1/2)
                      local lssNLL = torch.cmul(model.dec_ds[d][k] * (model.eps[k]/2), (torch.exp(lss * 1/2)))
                      local lssKL = torch.exp(lss)*(-1) + torch.ones(zDim):cuda()
-                     ds[d][k] = transfer_data(torch.cat(muNLL:double() + muKL:double(), lssNLL:double() + lssNLL:double()))
 
+                     if opts.sgvb2 then
+                        local lsmNLL = torch.cmul(model.dec_ds[d][k] * (1/2), (torch.exp(model.lsm[d][k] * 1/2)))
+                        local lsmKL = torch.exp(model.lsm[d][k] * 1/2)*(1/2)
+                        local lssNLL = torch.cmul(model.dec_ds[d][k] * (model.eps[k]/2), (torch.exp(model.lss[d][k] * 1/2)))
+                        local lssKL = torch.exp(model.lss[d][k])*(-1)*(1/2) + torch.ones(zDim):cuda()
+
+                        local input = state[line_length[k]][d][k]
+                        local lsmds = model.lsm[d]:backward(input, lsmNLL + lsmKL)
+                        local lssds = model.lss[d]:backward(input, lssNLL + lssKL)
+                        ds[d][k] = lsmds + lssds
+                     end
+
+
+                     ds[d][k] = transfer_data(torch.cat(muNLL:double() + muKL:double(), lssNLL:double() + lssNLL:double()))
                   else
                      ds[d][k] = model.dec_ds[d][k]
                   end
