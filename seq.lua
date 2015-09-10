@@ -35,10 +35,6 @@ function transfer_data(x)
    return x:cuda()
 end
 
-local function between()
-
-   for layer_idx = 1, opts.layers do
-
 local function lstm(x, prev_c, prev_h, in_size, rnn_size)
    -- Calculate four gates together (rows of x are individual examples)
    local i2h = nn.Linear(in_size, 4*rnn_size)(x)
@@ -152,6 +148,47 @@ local function setupDecoder()
    model.dec_err = transfer_data(torch.zeros(dec_data.len_max))
 end
 
+local function setupSGVB()
+
+   params.lsmx = {}
+   params.lsmdx = {}
+   params.lssx = {}
+   params.lssdx = {}
+   model.lsm = {}
+   model.lss = {}
+   model.lsm_s = {}
+   model.lss_s = {}
+
+   for d = 1, 2 * opts.layers do
+      local h1 = nn.Linear(opts.enc_rnn_size, opts.dec_rnn_size)()
+      local h2 = nn.Log()(h1)
+      local mlp = nn.gModule({h1}, {h2})
+      mlp:getParameters():uniform(-opts.weight_init, opts.weight_init)
+      model.lsm[d] = transfer_data(mlp)
+      local x, dx = model.lsm[d]:getParameters()
+      table.insert(params.lsmx, x)
+      table.insert(params.lsmdx, dx)
+   end
+
+   for d = 1, 2 * opts.layers do
+      local h1 = nn.Linear(opts.enc_rnn_size, opts.dec_rnn_size)()
+      local h2 = nn.Log()(h1)
+      local mlp = nn.gModule({h1}, {h2})
+      mlp:getParameters():uniform(-opts.weight_init, opts.weight_init)
+      model.lss[d] = transfer_data(mlp)
+      local x, dx = model.lss[d]:getParameters()
+      table.insert(params.lssx, x)
+      table.insert(params.lssdx, dx)
+   end
+
+   for d = 1, 2 * opts.layers do
+         local lsm_state = torch.zeros(opts.batch_size,opts.dec_rnn_size)
+         model.lsm_s[d] = transfer_data(lsm_state)
+         local lss_state = torch.zeros(opts.batch_size,opts.dec_rnn_size)
+         model.lss_s[d] = transfer_data(lss_state)
+   end
+
+end
 
 local function fpSeq(x, y, batch_len_max, line_length, num_examples, state, err, net, test, system)
 
@@ -201,18 +238,17 @@ local function fp(enc_x, enc_y, dec_x, dec_y, batch, test)
    for k = 1, batch.size do
       for d = 1, 2 * opts.layers do
          if opts.sgvb then
-            if opts.sgvb2 then
-               local input = model.enc_s[batch.enc_line_length[k]][d][k]
-               local lsm = model.lsm[d]:forward(input)
-               local lss = model.lss[d]:forward(input)
-               model.lsm[d][k] = lsm
-               model.lss[d][k] = lss
-            else
-               local out = model.enc_s[batch.enc_line_length[k]][d][k]
-               local outReshape = torch.reshape(out,2,opts.enc_rnn_size/2)
-               local lsm = outReshape[1]
-               local lss = outReshape[2]
-            end
+            local input = model.enc_s[batch.enc_line_length[k]][d][k]
+            local lsm = model.lsm[d]:forward(input)
+            local lss = model.lss[d]:forward(input)
+            model.lsm_s[d][k] = lsm
+            model.lss_s[d][k] = lss
+
+            --local out = model.enc_s[batch.enc_line_length[k]][d][k]
+            --local outReshape = torch.reshape(out,2,opts.enc_rnn_size/2)
+            --local lsm = outReshape[1]
+            --local lss = outReshape[2]
+
             local mu = torch.pow(torch.exp(lsm),1/2)
             local sigma = torch.pow(torch.exp(lss),1/2)
             model.eps[k] = torch.normal(0,1)
@@ -239,31 +275,27 @@ local function bpSeq(x, y, batch_len_max, num_examples, line_length, state, ds, 
             if line_length[k] == i then
                for d = 1, 2 * opts.layers do
                   if opts.sgvb then
+                     --local input = state[line_length[k]][d][k]
+                     --local zDim = opts.enc_rnn_size/2
+                     --local inputReshape = torch.reshape(input,2,zDim)
+                     --local mu = inputReshape[1]
+                     --local lss = inputReshape[2]
+                     --local muNLL = torch.cmul(model.dec_ds[d][k] * (1/2), (torch.exp(lss * 1/2)))
+                     --local muKL = torch.cmul(model.dec_ds[d][k], torch.exp(mu * 1/2)) * (1/2)
+                     --local lssNLL = torch.cmul(model.dec_ds[d][k] * (model.eps[k]/2), (torch.exp(lss * 1/2)))
+                     --local lssKL = torch.exp(lss)*(-1) + torch.ones(zDim):cuda()
+
+                     local lsmNLL = torch.cmul(model.dec_ds[d][k] * (1/2), (torch.exp(model.lsm_s[d][k] * 1/2)))
+                     local lsmKL = torch.exp(model.lsm_s[d][k])*(-1)
+                     local lssNLL = torch.cmul(model.dec_ds[d][k] * (model.eps[k]/2), (torch.exp(model.lss_s[d][k] * 1/2)))
+                     local lssKL = torch.exp(model.lss_s[d][k])*(-1) + torch.ones(opts.dec_rnn_size):cuda()
+                     
                      local input = state[line_length[k]][d][k]
-                     local zDim = opts.enc_rnn_size/2
-                     local inputReshape = torch.reshape(input,2,zDim)
-                     local mu = inputReshape[1]
-                     local lss = inputReshape[2]
-                     --local muNLL = model.dec_ds[d][k]
-                     local muNLL = torch.cmul(model.dec_ds[d][k] * (1/2), (torch.exp(lss * 1/2)))
-                     local muKL = torch.cmul(model.dec_ds[d][k], torch.exp(mu * 1/2)) * (1/2)
-                     local lssNLL = torch.cmul(model.dec_ds[d][k] * (model.eps[k]/2), (torch.exp(lss * 1/2)))
-                     local lssKL = torch.exp(lss)*(-1) + torch.ones(zDim):cuda()
+                     local lsmds = model.lsm[d]:backward(input, lsmNLL + lsmKL)
+                     local lssds = model.lss[d]:backward(input, lssNLL + lssKL)
+                     ds[d][k] = lsmds + lssds
 
-                     if opts.sgvb2 then
-                        local lsmNLL = torch.cmul(model.dec_ds[d][k] * (1/2), (torch.exp(model.lsm[d][k] * 1/2)))
-                        local lsmKL = torch.exp(model.lsm[d][k] * 1/2)*(1/2)
-                        local lssNLL = torch.cmul(model.dec_ds[d][k] * (model.eps[k]/2), (torch.exp(model.lss[d][k] * 1/2)))
-                        local lssKL = torch.exp(model.lss[d][k])*(-1)*(1/2) + torch.ones(zDim):cuda()
-
-                        local input = state[line_length[k]][d][k]
-                        local lsmds = model.lsm[d]:backward(input, lsmNLL + lsmKL)
-                        local lssds = model.lss[d]:backward(input, lssNLL + lssKL)
-                        ds[d][k] = lsmds + lssds
-                     end
-
-
-                     ds[d][k] = transfer_data(torch.cat(muNLL:double() + muKL:double(), lssNLL:double() + lssNLL:double()))
+                     --ds[d][k] = transfer_data(torch.cat(muNLL:double() + muKL:double(), lssNLL:double() + lssNLL:double()))
                   else
                      ds[d][k] = model.dec_ds[d][k]
                   end
@@ -315,6 +347,11 @@ local function bp(enc_x,enc_y,dec_x,dec_y,batch,test)
                 params.encoderdx, 'encoder')
    model.enc_norm_dw = grad:norm()
    params.encoderx:add(grad:mul(-opts.lr))
+
+   for d = 1, 2 * opts.layers do
+      params.lsmx[d]:add(params.lsmdx[d]:mul(-opts.lr))
+      params.lssx[d]:add(params.lssdx[d]:mul(-opts.lr))
+   end
 
 end
 
@@ -374,6 +411,10 @@ local function loadModel()
       params.encoderdx:copy(oldModel[1].encoderdx)
       params.decoderx:copy(oldModel[1].decoderx)
       params.decoderdx:copy(oldModel[1].decoderdx)
+      params.lsmx:copy(oldModel[1].lsmx)
+      params.lsmdx:copy(oldModel[1].lsmdx)
+      params.lssx:copy(oldModel[1].lssx)
+      params.lssdx:copy(oldModel[1].lssdx)
       opts.start = oldModel[2]
       opts.lr = oldModel[3]
       stats = oldModel[4]
@@ -562,6 +603,9 @@ function run()
    setupEncoder()
    print("Setting up Decoder")
    setupDecoder()
+   if opts.sgvb then
+      setupSGVB()
+   end
 
 
    local stats = {}
