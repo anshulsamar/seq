@@ -150,10 +150,6 @@ end
 
 local function setupSGVB()
 
-   params.lsmx = {}
-   params.lsmdx = {}
-   params.lssx = {}
-   params.lssdx = {}
    model.lsm = {}
    model.lss = {}
    model.lsm_s = {}
@@ -163,23 +159,19 @@ local function setupSGVB()
    for d = 1, 2 * opts.layers do
       local h1 = nn.Identity()()
       local h2 = nn.Linear(opts.enc_rnn_size, opts.dec_rnn_size)(h1)
+      --local h2 = nn.Identity()(h1)
       local mlp = nn.gModule({h1}, {h2})
       mlp:getParameters():uniform(-opts.weight_init, opts.weight_init)
       model.lsm[d] = transfer_data(mlp)
-      local x, dx = model.lsm[d]:getParameters()
-      params.lsmx[d] = x
-      params.lsmdx[d] = dx
    end
 
    for d = 1, 2 * opts.layers do
       local h1 = nn.Identity()()
       local h2 = nn.Linear(opts.enc_rnn_size, opts.dec_rnn_size)(h1)
+      --local h2 = nn.Identity()(h1)
       local mlp = nn.gModule({h1}, {h2})
       mlp:getParameters():uniform(-opts.weight_init, opts.weight_init)
       model.lss[d] = transfer_data(mlp)
-      local x, dx = model.lss[d]:getParameters()
-      params.lssx[d] = x
-      params.lssdx[d] = dx
    end
 
    for d = 1, 2 * opts.layers do
@@ -257,19 +249,29 @@ local function fp(enc_x, enc_y, dec_x, dec_y, batch, test)
       end
       for d = 1, 2 * opts.layers do
          local input = model.enc_out[d]
-         print(input)
          local lsm = model.lsm[d]:forward(input)
-         print(model.lsm[d]:getParameters())
-         local lss = model.lss[d]:forward(input)
          model.lsm_s[d] = lsm
+         local lss = model.lss[d]:forward(input)
          model.lss_s[d] = lss
          
          local mu = lsm --torch.pow(torch.exp(lsm),1/2)
          local sigma = torch.exp(lss * 1/2)
+         --local z = mu + torch.cmul(sigma, model.eps[d])
          local z = mu + torch.cmul(sigma, model.eps[d])
-         print(mu)
-         print(sigma)
-         print(z)
+         if d == 1 and false then
+            print('input')
+            print(input)
+            print('parameters')
+            print(model.lsm[d]:getParameters())
+            print('mu')
+            print(mu)
+            print('lss')
+            print(lss)
+            print('sigma')
+            print(sigma)
+            print('z')
+            print(z)
+         end
          model.dec_s[0][d] = z
       end
    else
@@ -294,22 +296,41 @@ local function bpSeq(x, y, batch_len_max, num_examples, line_length, state, ds, 
 
    if system == 'encoder' and opts.sgvb then
       for d = 1, 2 * opts.layers do
-         params.lsmdx[d]:zero()
-         params.lssdx[d]:zero()
+         local x, dx = model.lsm[d]:getParameters()
+         dx:zero()
+         local x, dx = model.lss[d]:getParameters()
+         dx:zero()
+
          local lsmNLL = torch.ones(opts.batch_size,opts.dec_rnn_size):cuda()
-         -- local lsmNLL = torch.cmul(model.dec_ds[d], (torch.exp(model.lsm_s[d] * 1/2))) * 1/2
+         lsmNLL = torch.cmul(model.dec_ds[d], lsmNLL)
+         --local lsmNLL = torch.cmul(model.dec_ds[d], (torch.exp(model.lsm_s[d] * 1/2))) * 1/2
+
          local lsmKL = model.lsm_s[d] * -2 --torch.exp(model.lsm_s[d])*(-1)
          local lssNLL = torch.cmul(torch.cmul(model.dec_ds[d],model.eps[d]),torch.exp(model.lss_s[d] * 1/2)) * 1/2
          local lssKL = torch.exp(model.lss_s[d])*(-1) + torch.ones(opts.batch_size,opts.dec_rnn_size):cuda()
-         local input = model.enc_out[d]
-         if d == 1 then
-            --print(input)
-            --print(lsmNLL + lsmKL)
+         --local input = model.enc_out[d]
+         lsmds[d] = model.lsm[d]:backward(input, lsmNLL - lsmKL) --lsmNLL + lssKL)
+         lssds[d] = model.lss[d]:backward(input, lssNLL - lssKL) --lssNLL + lssKL)
+         if d ==1 then
+            print('lsmNLL')
+            print(lsmNLL)
+            print('lsmKL')
+            print(lsmKL)
+            print('lssNLL')
+            print(lssNLL)
+            print('model.dec_ds[d]')
+            print(model.dec_ds[1])
+
+            print('lssKL')
+            print(lssKL)
+            print('lsmsds')
+            print(lsmds[1])
+            print('lsmxdx')
+            print(model.lsm[1]:getParameters())
+            print('lssxdx')
+            print(model.lss[1]:getParameters())
          end
-         lsmds[d] = model.lsm[d]:backward(input, lsmNLL + lsmKL)
-         lssds[d] = model.lss[d]:backward(input, lssNLL + lssKL)
       end
-      --print(lsmds[1])
 
    end
 
@@ -339,12 +360,11 @@ local function bpSeq(x, y, batch_len_max, num_examples, line_length, state, ds, 
       local input = {x[i], y[i], s}
       local output = {derr, ds}
       local tmp = net[i]:backward(input, output)[3]
+      local x, dx = net[i]:getParameters()
       g_replace_table(ds, tmp)
       cutorch.synchronize()
    end
 
-   --print(system .. 'norm: ' .. grad:norm())
-   
    if grad:norm() > opts.max_grad_norm then
       local shrink_factor = opts.max_grad_norm/grad:norm()
       grad:mul(shrink_factor)
@@ -372,11 +392,12 @@ local function bp(enc_x,enc_y,dec_x,dec_y,batch,test)
                 params.encoderdx, 'encoder')
    model.enc_norm_dw = grad:norm()
    params.encoderx:add(grad:mul(-opts.lr))
-   --print(params.lsmdx[1])
 
    for d = 1, 2 * opts.layers do
-      params.lsmx[d]:add(params.lsmdx[d]:mul(-opts.lr))
-      params.lssx[d]:add(params.lssdx[d]:mul(-opts.lr))
+      local x, dx = model.lsm[d]:getParameters()
+      x:add(dx:mul(-opts.lr))
+      local x, dx = model.lss[d]:getParameters()
+      x:add(dx:mul(-opts.lr))
    end
 
 end
@@ -437,10 +458,6 @@ local function loadModel()
       params.encoderdx:copy(oldModel[1].encoderdx)
       params.decoderx:copy(oldModel[1].decoderx)
       params.decoderdx:copy(oldModel[1].decoderdx)
-      params.lsmx:copy(oldModel[1].lsmx)
-      params.lsmdx:copy(oldModel[1].lsmdx)
-      params.lssx:copy(oldModel[1].lssx)
-      params.lssdx:copy(oldModel[1].lssdx)
       opts.start = oldModel[2]
       opts.lr = oldModel[3]
       stats = oldModel[4]
@@ -559,7 +576,7 @@ local function getOpts()
    torch.manualSeed(1)
    cmd:option('-layers',1)
    cmd:option('-enc_in_size',1)
-   cmd:option('-enc_rnn_size',2)
+   cmd:option('-enc_rnn_size',1)
    cmd:option('-dec_in_size',1)
    cmd:option('-dec_rnn_size',1)
    cmd:option('-load_model',false)
@@ -573,7 +590,6 @@ local function getOpts()
    cmd:option('-decay',2)
    cmd:option('-weight_init',.1)
    cmd:option('-lr',0.7)
-   cmd:option('-freq_floor',6)
    cmd:option('-start',0)
    cmd:option('-test',true)
    cmd:option('-train',true)
