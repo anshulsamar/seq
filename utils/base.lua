@@ -6,6 +6,10 @@
 
 require 'gnuplot'
 
+function g_transfer_data(x)
+   return x:cuda()
+end
+
 function g_cloneManyTimes(net, T)
   local clones = {}
   local params, gradParams = net:parameters()
@@ -29,11 +33,9 @@ function g_cloneManyTimes(net, T)
   return clones
 end
 
-function g_init_gpu(args)
-  local gpuidx = args
-  gpuidx = gpuidx[1] or 1
-  print(string.format("Using %s-th gpu", gpuidx))
-  cutorch.setDevice(gpuidx)
+function g_init_gpu(gpu)
+  print(string.format("Using %s-th gpu", gpu))
+  cutorch.setDevice(gpu)
   g_make_deterministic(1)
 end
 
@@ -91,6 +93,14 @@ function g_initialize_mat(len_max, default_index, opts)
    
 end
 
+function g_initialize_eps()
+   for d = 1, 2 * opts.layers do
+      if opts.sgvb then
+         model.eps[d] = g_transfer_data(torch.zeros(opts.batch_size))
+      end
+   end
+end
+
 function g_make_run_dir(opts)
    if paths.dir(opts.run_dir) == nil then
       paths.mkdir(opts.run_dir)
@@ -123,11 +133,29 @@ function g_reset_stats(stats)
    stats.test.enc_err = 0
 end
 
-function g_print(mlp)
+function g_print_mod(mlp)
    for indexNode, node in ipairs(mlp.forwardnodes) do
       if node.data.module then
          print(node.data.module)
       end
+   end
+end
+
+function g_print(text,color)
+   if color == 'red' then
+      print('\27[31m' .. text)
+   elseif color == 'green' then
+      print('\27[32m' .. text)
+   elseif color == 'yellow' then
+      print('\27[33m' .. text)
+   elseif color == 'blue' then
+      print('\27[34m' .. text)
+   elseif color == 'purple' then
+      print('\27[35m' .. text)
+   elseif color == 'cyan' then
+      print('\27[36m' .. text)
+   else
+      print(text)
    end
 end
 
