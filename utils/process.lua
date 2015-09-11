@@ -16,7 +16,7 @@ local function getError(batch)
 end
 
 
-local function log(epoch, iter, mode, stats, batch)
+function log(epoch, iter, mode, stats, batch)
    local st 
    if mode == 'test' then 
       st = stats.test 
@@ -25,7 +25,6 @@ local function log(epoch, iter, mode, stats, batch)
    end
 
    st.enc_err, st.dec_err = getError(batch)
-   st.avg_enc_err = ((st.avg_enc_err * (iter-1)) + st.enc_err)/iter
    st.avg_dec_err = ((st.avg_dec_err * (iter-1)) + st.dec_err)/iter
 
    print(mode .. ': epoch=' .. string.format('%02d',epoch + opts.start) ..  
@@ -45,8 +44,8 @@ end
 
 function decode(epoch,iter,batch,enc_line,dec_line,mode,opts)
    local indexes = {}
-   for i=1,#dec_output do
-      local y, ind = torch.max(dec_output[i],2)
+   for i=1,#decoder.out do
+      local y, ind = torch.max(decoder.out[i],2)
       table.insert(indexes,ind)
    end
 
@@ -57,7 +56,7 @@ function decode(epoch,iter,batch,enc_line,dec_line,mode,opts)
    end
 
    local decode_f = mode .. '_' .. (epoch+opts.start) .. '_' .. iter .. '.txt'
-   local f = io.open(opts.decode_dir .. decode_f'a+')
+   local f = io.open(opts.decode_dir .. decode_f, 'a+')
 
    for i=1,#dec_line do
       local num_words = batch.dec_line_length[i]

@@ -11,8 +11,6 @@ require 'cutorch'
 require 'cunn'
 require 'paths'
 require 'math'
-require 'criterion/EncCriterion'
-require 'criterion/DecCriterion'
 require 'utils/base'
 require 'utils/process'
 require 'utils/load'
@@ -24,14 +22,13 @@ require 'network'
 -- Global Data Structures
 
 encoder = {net = {}, s = {}, ds = {}, out = {}, err = {}, norm = 0}
-decoder = {net = {}, s = {}, ds = {}, err = {}, norm = 0}
+decoder = {net = {}, s = {}, ds = {}, out = {}, err = {}, norm = 0}
 mlp = {lsigs = {}, mu = {}, eps = {}}
 mlp.lsigs = {net = {}, s = {}, ds = {}, err = {}, norm = 0}
 mlp.mu = {net = {}, s = {}, ds = {}, err = {}, norm = 0}
 enc_data = {}
 dec_data = {}
 opts = {}
-dec_output = {}
 
 local function get_opts()
    local cmd = torch.CmdLine()
@@ -103,29 +100,29 @@ function run()
    -- Network
    g_print("Creating Network\n----------------",'red')
    print("Setting up Encoder")
-   setupEncoder()
+   setup_encoder()
    print("Setting up Decoder")
-   setupDecoder()
-   if opts.sgvb then
-      setupSGVB()
-   end
+   setup_decoder()
+
+   if opts.sgvb then setup_mlp() end
 
    -- Stats
    if opts.stats then g_plot_err(opts.run_dir .. 'model.th7') return end
    local stats = {}
    stats.train = {avg_dec_err_epoch = {}}
    stats.test = {avg_dec_err_epoch = {}}
-
+   
    -- Training
    g_print("Training\n----------", 'red')
    local modes = {}
-   if opts.train then table.insert(mode, 'train') end
-   if opts.test then table.insert(mode, 'test') end
+   if opts.train then table.insert(modes, 'train') end
+   if opts.test then table.insert(modes, 'test') end
 
    for epoch=1,(opts.max_epoch - opts.start) do
       for _,mode in ipairs(modes) do
          -- Setup
          local iter = 0
+
          g_reset_stats(stats)
 
          -- Anneal
@@ -147,7 +144,7 @@ function run()
          while true do
             -- Read in Data
             iter = iter + 1
-            dec_output = {}
+            decoder.out = {}
             local enc_line = {}
             local dec_line = {}
             while #enc_line < opts.batch_size do

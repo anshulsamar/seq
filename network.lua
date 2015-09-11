@@ -4,10 +4,10 @@ require 'cutorch'
 require 'cunn'
 require 'paths'
 require 'math'
-require 'criterion/EncCriterion'
-require 'criterion/DecCriterion'
+require 'EncCriterion'
+require 'DecCriterion'
 require 'utils/base'
-require 'dataLoader'
+require 'data'
 
 
 local function lstm(x, prev_c, prev_h, in_size, rnn_size)
@@ -71,7 +71,7 @@ local function create_network(criterion,lookup,lookup_size,vocab_size,
 
 end
 
-local function setupEncoder()
+function setup_encoder()
    local net = create_network(EncCriterion,enc_data.lookup,
                             enc_data.lookup_size,enc_data.vocab_size,
                             opts.enc_in_size, opts.enc_rnn_size)
@@ -91,14 +91,18 @@ local function setupEncoder()
       encoder.ds[d] = g_transfer_data(deltas)
    end
    encoder.err = g_transfer_data(torch.zeros(enc_data.len_max))
+
+   for d = 1, 2 * opts.layers do
+      local out = torch.zeros(opts.batch_size,opts.enc_rnn_size)
+      encoder.out[d] = g_transfer_data(out)
+   end
 end
 
-local function setupDecoder()
-   local decoder = create_network(DecCriterion,dec_data.lookup,
+function setup_decoder()
+   local net = create_network(DecCriterion,dec_data.lookup,
                             dec_data.lookup_size,dec_data.vocab_size,
                             opts.dec_in_size, opts.dec_rnn_size)
-   params.decoderx, params.decoderdx = decoder:getParameters()
-   decoder.net = g_cloneManyTimes(decoder, dec_data.len_max)
+   decoder.net = g_cloneManyTimes(net, dec_data.len_max)
    decoder.s = {}
    decoder.ds = {}
    for j = 0, dec_data.len_max do
@@ -112,17 +116,23 @@ local function setupDecoder()
       local deltas = torch.zeros(opts.batch_size,opts.dec_rnn_size)
       decoder.ds[d] = g_transfer_data(deltas)
    end
-   model.dec_err = g_transfer_data(torch.zeros(dec_data.len_max))
+   decoder.err = g_transfer_data(torch.zeros(dec_data.len_max))
 end
 
-local function setupSGVB()
-
+function setup_mlp()
    for d = 1, 2 * opts.layers do
       local h1 = nn.Identity()()
       local h2 = nn.Linear(opts.enc_rnn_size, opts.dec_rnn_size)(h1)
       local net = nn.gModule({h1}, {h2})
       net:getParameters():uniform(-opts.weight_init, opts.weight_init)
       mlp.mu.net[d] = g_transfer_data(net)
+   end
+
+   for d = 1, 2 * opts.layers do
+      local s = torch.zeros(opts.batch_size,opts.dec_rnn_size)
+      mlp.mu.s[d] = g_transfer_data(s)
+      local ds = torch.zeros(opts.batch_size,opts.dec_rnn_size)
+      mlp.mu.ds[d] = g_transfer_data(ds)
    end
 
    for d = 1, 2 * opts.layers do
@@ -135,14 +145,8 @@ local function setupSGVB()
 
    for d = 1, 2 * opts.layers do
       local s = torch.zeros(opts.batch_size,opts.dec_rnn_size)
-      mlp.mu.s[d] = g_transfer_data(s)
-      local s = torch.zeros(opts.batch_size,opts.dec_rnn_size)
       mlp.lsigs.s[d] = g_transfer_data(s)
+      local ds = torch.zeros(opts.batch_size,opts.dec_rnn_size)
+      mlp.lsigs.ds[d] = g_transfer_data(ds)
    end
-
-   for d = 1, 2 * opts.layers do
-      local out = torch.zeros(opts.batch_size,opts.enc_rnn_size)
-      encoder.out[d] = g_transfer_data(out)
-   end
-
 end

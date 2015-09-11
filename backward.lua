@@ -5,32 +5,27 @@ require 'cutorch'
 require 'cunn'
 require 'paths'
 require 'math'
-require 'criterion/EncCriterion'
-require 'criterion/DecCriterion'
 require 'utils/base'
 require 'data'
 
 local function bp_decoder(x, y, batch)
    local x, dx = decoder.net[1]:getParameters()
    dx:zero()
-
    for i = batch.dec_len_max, 1, -1 do
       local s = decoder.s[i-1]
       local derr = g_transfer_data(torch.ones(1))
       local input = {x[i], y[i], s}
-      local output = {derr, ds}
+      local output = {derr, decoder.ds}
       local tmp = decoder.net[i]:backward(input, output)[3]
       g_replace_table(decoder.ds, tmp)
       cutorch.synchronize()
    end
 
    decoder.norm = dx:norm()
-
    if dx:norm() > opts.max_grad_norm then
       local shrink_factor = opts.max_grad_norm/dx:norm()
       dx:mul(shrink_factor)
    end
-
    x:add(dx:mul(-opts.lr))
 end
 
@@ -49,13 +44,13 @@ local function bp_mlp()
       local p1 = torch.exp(mlp.lsigs.s[d])*(-1) 
       local p2 = torch.ones(opts.batch_size,opts.dec_rnn_size):cuda()
       local lsigsKL = p1 + p2
-      mlp.mu.ds[d] = model.mu.net[d]:backward(input, muNLL - muKL)
-      mlp.lsigs.ds[d] = model.lsigs.net[d]:backward(input, lssNLL - lssKL)
+      mlp.mu.ds[d] = mlp.mu.net[d]:backward(input, muNLL - muKL)
+      mlp.lsigs.ds[d] = mlp.lsigs.net[d]:backward(input, lsigsNLL - lsigsKL)
    end
 
    for d = 1, 2*opts.layers do
       local x, dx = mlp.mu.net[d]:getParameters()
-      mlp.mu.norm = mlp.mu.norm + dx
+      mlp.mu.norm = mlp.mu.norm + dx:norm()
       if dx:norm() > opts.max_grad_norm then
          local shrink_factor = opts.max_grad_norm/dx:norm()
          dx:mul(shrink_factor)
@@ -63,7 +58,7 @@ local function bp_mlp()
       x:add(dx:mul(-opts.lr))
 
       local x, dx = mlp.lsigs.net[d]:getParameters()
-      mlp.lsigs.norm = mlp.mu.norm + dx
+      mlp.lsigs.norm = mlp.mu.norm + dx:norm()
       if dx:norm() > opts.max_grad_norm then
          local shrink_factor = opts.max_grad_norm/dx:norm()
          dx:mul(shrink_factor)
@@ -79,11 +74,11 @@ local function bp_encoder(x, y, batch)
    local x, dx = encoder.net[1]:getParameters()
    dx:zero()
 
-   for i = batch_len_max, 1, -1 do
-      local s = state[i-1]
+   for i = batch.enc_len_max, 1, -1 do
+      local s = encoder.s[i-1]
       local derr = g_transfer_data(torch.ones(1))
       local input = {x[i], y[i], s}
-      local output = {derr, ds}
+      local output = {derr, encoder.ds}
       local tmp = encoder.net[i]:backward(input, output)[3]
       g_replace_table(encoder.ds, tmp)
       cutorch.synchronize()
@@ -105,7 +100,7 @@ local function transfer_s(batch)
          if batch.enc_line_length[k] == i then
             for d = 1, 2 * opts.layers do
                if opts.sgvb then
-                  encoder.ds[d][k] = mlp.lsmds[d][k] + mlp.lssds[d][k]
+                  encoder.ds[d][k] = mlp.mu.ds[d][k] + mlp.lsigs.ds[d][k]
                else
                   encoder.ds[d][k] = decoder.ds[d][k]
                end

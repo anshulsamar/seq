@@ -1,3 +1,5 @@
+require 'torch'
+
 local function loadMat(line, index, i, x, y, dec)
    local indexes = {}
    local num_word = 0
@@ -34,7 +36,7 @@ local function loadMat(line, index, i, x, y, dec)
    return num_word, last_word
 end
 
-local function load(enc_x, enc_y, enc_line, dec_x, dec_y, dec_line, batch)
+function load(enc_x, enc_y, enc_line, dec_x, dec_y, dec_line, batch)
    for i=1,#enc_line do
       if enc_line[i] ~= nil then
          enc_num_word, last_word = loadMat(enc_line[i],
@@ -54,5 +56,4 @@ local function load(enc_x, enc_y, enc_line, dec_x, dec_y, dec_line, batch)
          batch.enc_line_length[i] = enc_num_word
       end
    end
-
 end

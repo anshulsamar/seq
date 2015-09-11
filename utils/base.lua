@@ -86,8 +86,8 @@ function g_initialize_mat(len_max, default_index, opts)
 
    for i=1,len_max do
       local x_init = torch.ones(opts.batch_size) * default_index
-      table.insert(x,transfer_data(x_init))
-      table.insert(y,transfer_data(torch.zeros(opts.batch_size)))
+      table.insert(x,g_transfer_data(x_init))
+      table.insert(y,g_transfer_data(torch.zeros(opts.batch_size)))
    end
    return x, y
    
@@ -111,7 +111,7 @@ end
 function g_reset_encoder()
    for j = 0, enc_data.len_max do
       for d = 1, 2 * opts.layers do
-         encoder[j][d]:zero()
+         encoder.s[j][d]:zero()
       end
    end
    for d = 1, 2 * opts.layers do
@@ -123,7 +123,7 @@ end
 function g_reset_decoder()
    for j = 0, dec_data.len_max do
       for d = 1, 2 * opts.layers do
-         decoder[j][d]:zero()
+         decoder.s[j][d]:zero()
       end
    end
    for d = 1, 2 * opts.layers do
