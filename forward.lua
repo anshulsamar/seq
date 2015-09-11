@@ -1,7 +1,7 @@
 require 'torch'
 require 'utils/base.lua'
 
-local function fp_encoder(x, y, batch, test)
+local function fp_encoder(x, y, batch, mode)
    local ret
    for i = 1, batch.enc_len_max do
       local s = encoder.s[i - 1]
@@ -25,8 +25,8 @@ local function fp_encoder(x, y, batch, test)
    end
 end
 
-local function fp_decoder(x, y, batch, test)
-   if test then
+local function fp_decoder(x, y, batch, mode)
+   if mode == 'test' then
       local x_init = torch.ones(opts.batch_size) * dec_data.default_index
       x = {g_transfer_data(x_init)}
    end
@@ -35,7 +35,7 @@ local function fp_decoder(x, y, batch, test)
    for i = 1, batch.dec_len_max do
       local s = decoder.s[i - 1]
       ret = decoder.net[i]:forward({x[i], y[i], s})
-      if test then
+      if mode == 'test' then
          local _, ind = torch.max(dec_output[i],2)
          table.insert(x,ind:select(2,1))
       end
@@ -87,23 +87,16 @@ local function fp_mlp()
    end
 end
 
-function fp(enc_x, enc_y, dec_x, dec_y, batch, test)
-
-   g_reset_s(encoder.s,enc_data.len_max,opts)
-   g_reset_s(decoder.s,dec_data.len_max,opts)
-   g_reset_ds(model.enc_out,opts)
-
-   fp_encoder(enc_x, enc_y, batch, test)
-
-   if opts.sgvb then 
-      fp_mlp()
-   else
-      for k = 1, batch.size do
-         for d = 1, 2 * opts.layers do
-            decoder.s[0][d][k] = encoder.s[batch.enc_line_length[k]][d][k]
-         end
+local function transfer_s()
+   for k = 1, batch.size do
+      for d = 1, 2 * opts.layers do
+         decoder.s[0][d][k] = encoder.s[batch.enc_line_length[k]][d][k]
       end
    end
+end
 
-   fp_decoder(dec_x, dec_y, batch, test)
+function fp(enc_x, enc_y, dec_x, dec_y, batch, mode)
+   fp_encoder(enc_x, enc_y, batch, mode)
+   if opts.sgvb then fp_mlp() else transfer_s() end
+   fp_decoder(dec_x, dec_y, batch, mode)
 end

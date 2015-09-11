@@ -71,12 +71,12 @@ end
 function g_initialize_batch(size)
    local batch = {}
    batch.size = size
-   batch.enc_lengths = torch.zeros(size)
-   batch.dec_lengths = torch.zeros(size)
    batch.enc_len_max = 0
+   batch.enc_line_length = {}
+   batch.enc_lengths = torch.zeros(size)
    batch.dec_len_max = 0
    batch.dec_line_length = {}
-   batch.enc_line_length = {}
+   batch.dec_lengths = torch.zeros(size)
    return batch
 end
 
@@ -108,29 +108,43 @@ function g_make_run_dir(opts)
    end
 end
 
-function g_reset_s(state, len_max, opts)
-   for j = 0, len_max do
+function g_reset_encoder()
+   for j = 0, enc_data.len_max do
       for d = 1, 2 * opts.layers do
-         state[j][d]:zero()
+         encoder[j][d]:zero()
       end
+   end
+   for d = 1, 2 * opts.layers do
+      encoder.ds[d]:zero()
+      encoder.out[d]:zero()
    end
 end
 
-function g_reset_ds(ds, opts)
+function g_reset_decoder()
+   for j = 0, dec_data.len_max do
+      for d = 1, 2 * opts.layers do
+         decoder[j][d]:zero()
+      end
+   end
    for d = 1, 2 * opts.layers do
-      ds[d]:zero()
+      decoder.ds[d]:zero()
+   end
+end
+
+function g_reset_mlp()
+   for d = 1, 2 * opts.layers do
+      mlp.lsigs.s[d]:zero()
+      mlp.lsigs.ds[d]:zero()
+      mlp.mu.s[d]:zero()
+      mlp.mu.ds[d]:zero()
    end
 end
 
 function g_reset_stats(stats)
-   stats.train.avg_enc_err = 0
    stats.train.avg_dec_err = 0
    stats.train.dec_err = 0
-   stats.train.enc_err = 0
-   stats.test.avg_enc_err = 0
    stats.test.avg_dec_err = 0
    stats.test.dec_err = 0
-   stats.test.enc_err = 0
 end
 
 function g_print_mod(mlp)

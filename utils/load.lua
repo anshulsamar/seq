@@ -1,21 +1,3 @@
-local function loadModel()
-   filen = opts.run_dir .. '/model.th7'
-   if (paths.filep(filen)) then
-      print("Loading previous parameters")
-      local oldModel = torch.load(opts.run_dir .. '/model.th7')
-      params.encoderx:copy(oldModel[1].encoderx)
-      params.encoderdx:copy(oldModel[1].encoderdx)
-      params.decoderx:copy(oldModel[1].decoderx)
-      params.decoderdx:copy(oldModel[1].decoderdx)
-      opts.start = oldModel[2]
-      opts.lr = oldModel[3]
-      stats = oldModel[4]
-   else
-      print('No model to load, training from scratch')
-   end
-end
-
-
 local function loadMat(line, index, i, x, y, dec)
    local indexes = {}
    local num_word = 0

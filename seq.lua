@@ -15,18 +15,19 @@ require 'criterion/EncCriterion'
 require 'criterion/DecCriterion'
 require 'utils/base'
 require 'utils/process'
-require 'dataLoader'
+require 'utils/load'
+require 'data'
 require 'forward'
 require 'backward'
-require 'createModule'
+require 'network'
 
 -- Global Data Structures
 
-encoder = {net = {}, s = {}, ds = {}, out = {}, err = {}}
-decoder = {net = {}, s = {}, ds = {}, err = {}}
+encoder = {net = {}, s = {}, ds = {}, out = {}, err = {}, norm = 0}
+decoder = {net = {}, s = {}, ds = {}, err = {}, norm = 0}
 mlp = {lsigs = {}, mu = {}, eps = {}}
-mlp.lsigs = {net = {}, s = {}, ds = {}, err = {}}
-mlp.mu = {net = {}, s = {}, ds = {}, err = {}}
+mlp.lsigs = {net = {}, s = {}, ds = {}, err = {}, norm = 0}
+mlp.mu = {net = {}, s = {}, ds = {}, err = {}, norm = 0}
 enc_data = {}
 dec_data = {}
 opts = {}
@@ -48,12 +49,12 @@ local function get_opts()
    cmd:option('-sgvb',false)
    cmd:option('-max_grad_norm',5)
    cmd:option('-anneal',true)
-   cmd:option('-anneal_after',10)
+   cmd:option('-anneal_after',15)
    cmd:option('-decay',2)
    cmd:option('-weight_init',.1)
    cmd:option('-lr',0.7)
    cmd:option('-start',0)
-   cmd:option('-max_epoch',15)
+   cmd:option('-max_epoch',20)
    cmd:option('-test',true)
    cmd:option('-train',true)
    cmd:option('-gpu',1)
@@ -92,18 +93,9 @@ function run()
    print("Saving Options")
    torch.save(paths.concat(opts.run_dir,'opts.th7'),opts)
 
-   -- Stats
-   if opts.stats then
-      g_plot_err(opts.run_dir .. 'model.th7')
-      return
-   end
-   local stats = {}
-   stats.train = {avg_dec_err_epoch = {}}
-   stats.test = {avg_dec_err_epoch = {}}
-
    -- Data
    print("Loading Data")
-   enc_data, dec_data = dataLoader.get(opts)
+   enc_data, dec_data = data.get(opts)
    if opts.share then
       dec_data = enc_data
    end
@@ -118,25 +110,20 @@ function run()
       setupSGVB()
    end
 
-   -- Model
-   if opts.load_model then 
-      print('Loading Model')
-      loadModel() 
-   end
+   -- Stats
+   if opts.stats then g_plot_err(opts.run_dir .. 'model.th7') return end
+   local stats = {}
+   stats.train = {avg_dec_err_epoch = {}}
+   stats.test = {avg_dec_err_epoch = {}}
 
    -- Training
    g_print("Training\n----------", 'red')
-   local test_options = {}
-   if opts.train then
-      table.insert(test_options, false)
-   end
-
-   if opts.test then
-      table.insert(test_options, true)
-   end
+   local modes = {}
+   if opts.train then table.insert(mode, 'train') end
+   if opts.test then table.insert(mode, 'test') end
 
    for epoch=1,(opts.max_epoch - opts.start) do
-      for _,test in ipairs(test_options) do
+      for _,mode in ipairs(modes) do
          -- Setup
          local iter = 0
          g_reset_stats(stats)
@@ -147,10 +134,9 @@ function run()
          end
 
          -- Open Data
-         local enc_f
-         local dec_f
+         local enc_f, dec_f
 
-         if test then
+         if mode == 'test' then
             enc_f = io.open(enc_data.test_file,'r')
             dec_f = io.open(dec_data.test_file,'r')
          else
@@ -158,10 +144,7 @@ function run()
             dec_f = io.open(dec_data.train_file,'r')
          end
          
-         --local max_iter = math.ceil(enc_data.total_lines/opts.batch_size)
-         
          while true do
-
             -- Read in Data
             iter = iter + 1
             dec_output = {}
@@ -182,20 +165,22 @@ function run()
             local enc_x, enc_y = g_initialize_mat(enc_data.len_max,
                                     enc_data.default_index, opts, batch)
             local dec_x, dec_y = g_initialize_mat(dec_data.len_max,
-                                    dec_data.default_index, opts, batch)       
-
+                                    dec_data.default_index, opts, batch)      
             collectgarbage()
 
             -- Load Matrices and Line Lengths
             load(enc_x, enc_y, enc_line, dec_x, dec_y, dec_line, batch)
 
             -- Forward and Backward Prop
-            fp(enc_x,enc_y,dec_x,dec_y,batch,test)
-            bp(enc_x,enc_y,dec_x,dec_y,batch,test)
+            g_reset_encoder()
+            g_reset_decoder()
+            if opts.sgvb then g_reset_mlp() end
+            fp(enc_x,enc_y,dec_x,dec_y,batch,mode)
+            bp(enc_x,enc_y,dec_x,dec_y,batch,mode)
 
             -- Log and Decode
-            log(epoch,iter,test,stats,batch)
-            decode(epoch,iter,batch,enc_line,dec_line,test,opts)
+            log(epoch,iter,mode,stats,batch)
+            decode(epoch,iter,batch,enc_line,dec_line,mode,opts)
 
             if batch.size ~= opts.batch_size then
                break
@@ -206,7 +191,8 @@ function run()
          dec_f:close()
 
          -- Save Model
-         local save_struct = {params, epoch + opts.start, opts.lr, stats}
+         
+         local save_struct = {{}, epoch + opts.start, opts.lr, stats}
          torch.save(opts.run_dir .. '/model.th7', save_struct)
                     
       end         

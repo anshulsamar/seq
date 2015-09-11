@@ -16,9 +16,9 @@ local function getError(batch)
 end
 
 
-local function log(epoch, iter, test, stats, batch)
+local function log(epoch, iter, mode, stats, batch)
    local st 
-   if test then 
+   if mode == 'test' then 
       st = stats.test 
    else 
       st = stats.train 
@@ -27,44 +27,37 @@ local function log(epoch, iter, test, stats, batch)
    st.enc_err, st.dec_err = getError(batch)
    st.avg_enc_err = ((st.avg_enc_err * (iter-1)) + st.enc_err)/iter
    st.avg_dec_err = ((st.avg_dec_err * (iter-1)) + st.dec_err)/iter
-   local runtime = "train"
-   if test then runtime = "test" end
 
-   print(runtime .. ': epoch=' .. string.format('%02d',epoch + opts.start) ..  
+   print(mode .. ': epoch=' .. string.format('%02d',epoch + opts.start) ..  
          ', iter=' .. string.format('%03d',iter) ..
-         ', enc_err=' .. string.format('%.2f',st.enc_err) ..
-         ', avg_enc_err=' .. string.format('%.2f',st.avg_enc_err) ..
+         -- ', enc_err=' .. string.format('%.2f',st.enc_err) ..
+         -- ', avg_enc_err=' .. string.format('%.2f',st.avg_enc_err) ..
          ', dec_err=' .. string.format('%.2f',st.dec_err) .. 
          ', avg_dec_err=' .. string.format('%.2f',st.avg_dec_err) ..
-         ', encdxNorm=' .. string.format('%.4f',model.enc_norm_dw) ..
-         ', decdxNorm=' .. string.format('%.4f',model.dec_norm_dw) .. 
+         ', encdxNorm=' .. string.format('%.4f',encoder.norm) ..
+         ', decdxNorm=' .. string.format('%.4f',decoder.norm) .. 
+         ', mudxNorm=' .. string.format('%.4f',mlp.mu.norm) .. 
+         ', lsigsdxNorm=' .. string.format('%.4f',mlp.lsigs.norm) .. 
          ', lr=' ..  string.format('%.3f',opts.lr))
 
    st.avg_dec_err_epoch[epoch] = st.avg_dec_err
-
 end
 
-function decode(epoch,iter,batch,enc_line,dec_line,test,opts)
-
+function decode(epoch,iter,batch,enc_line,dec_line,mode,opts)
    local indexes = {}
    for i=1,#dec_output do
       local y, ind = torch.max(dec_output[i],2)
       table.insert(indexes,ind)
    end
 
-   local runtime = "train"
-   if test then runtime = "test" end
-
    if epoch + opts.start - 1 >= 1 then
-      local oldDecodeName = 'decode_' .. runtime .. '_' .. (epoch + opts.start - 1) 
+      local old = mode .. '_' .. (epoch + opts.start - 1) 
          .. '*'
-      os.execute('rm -rf ' .. opts.decode_dir .. oldDecodeName)
+      os.execute('rm -rf ' .. opts.decode_dir .. old)
    end
 
-   local decodeName = 'decode_' .. runtime .. '_' .. (epoch + opts.start) 
-      .. '_' .. iter .. '.txt'
-  
-   local f = io.open(opts.decode_dir .. decodeName,'a+')
+   local decode_f = mode .. '_' .. (epoch+opts.start) .. '_' .. iter .. '.txt'
+   local f = io.open(opts.decode_dir .. decode_f'a+')
 
    for i=1,#dec_line do
       local num_words = batch.dec_line_length[i]
@@ -75,7 +68,5 @@ function decode(epoch,iter,batch,enc_line,dec_line,test,opts)
       f:write(enc_line[i] .. ' | ' .. sentence,'\n')
       f:flush()
    end
-
    f:close()
-
 end
