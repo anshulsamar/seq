@@ -137,7 +137,13 @@ function g_reset_mlp()
       mlp.lsigs.ds[d]:zero()
       mlp.mu.s[d]:zero()
       mlp.mu.ds[d]:zero()
+      local x, dx = mlp.mu.net[d]:getParameters()
+      dx:zero()
+      local x, dx = mlp.lsigs.net[d]:getParameters()
+      dx:zero()
    end
+   mlp.mu.norm = 0
+   mlp.lsigs.norm = 0
 end
 
 function g_reset_stats(stats)

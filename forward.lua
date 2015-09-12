@@ -60,6 +60,7 @@ local function fp_decoder(x, y, batch, mode)
 end
 
 local function fp_mlp(batch)
+
    for d = 1, 2 * opts.layers do
       mlp.eps[d] = torch.zeros(opts.batch_size,opts.dec_rnn_size):cuda()
       for k = 1, batch.size do
@@ -77,6 +78,7 @@ local function fp_mlp(batch)
    for d = 1, 2 * opts.layers do
       local input = encoder.out[d]
       local mu = mlp.mu.net[d]:forward(input)
+      --local mu = torch.exp(mlp.mu.net[d]:forward(input) * 1/2)
       mlp.mu.s[d] = mu
       local lsigs = mlp.lsigs.net[d]:forward(input)
       mlp.lsigs.s[d] = lsigs
