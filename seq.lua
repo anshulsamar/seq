@@ -21,8 +21,8 @@ require 'network'
 
 -- Global Data Structures
 
-encoder = {net = {}, s = {}, ds = {}, out = {}, err = {}, norm = 0}
-decoder = {net = {}, s = {}, ds = {}, out = {}, err = {}, norm = 0}
+encoder = {net = {}, s = {}, ds = {}, out = {}, err = {}, norm = 0, x, dx}
+decoder = {net = {}, s = {}, ds = {}, out = {}, err = {}, norm = 0, x, dx}
 mlp = {lsigs = {}, mu = {}, eps = {}}
 mlp.lsigs = {net = {}, s = {}, ds = {}, err = {}, norm = 0}
 mlp.mu = {net = {}, s = {}, ds = {}, err = {}, norm = 0}
@@ -35,11 +35,11 @@ local function get_opts()
 
    -- Network
    torch.manualSeed(1)
-   cmd:option('-layers',1)
-   cmd:option('-enc_in_size',1)
-   cmd:option('-enc_rnn_size',1)
-   cmd:option('-dec_in_size',1)
-   cmd:option('-dec_rnn_size',1)
+   cmd:option('-layers',2)
+   cmd:option('-enc_in_size',100)
+   cmd:option('-enc_rnn_size',200)
+   cmd:option('-dec_in_size',100)
+   cmd:option('-dec_rnn_size',200)
    cmd:option('-load_model',false)
 
    -- Training
@@ -59,7 +59,7 @@ local function get_opts()
 
    -- Data
    cmd:option('-share',true) -- share data and lookup table b/w enc/dec
-   cmd:option('-batch_size',1)
+   cmd:option('-batch_size',96)
    cmd:option('-data_dir','/deep/group/speech/asamar/nlp/data/numbers/')
    cmd:option('-enc_train_file','enc_train.txt')
    cmd:option('-dec_train_file','dec_train.txt')

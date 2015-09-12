@@ -9,8 +9,7 @@ require 'utils/base'
 require 'data'
 
 local function bp_decoder(x, y, batch)
-   local x, dx = decoder.net[1]:getParameters()
-   dx:zero()
+   decoder.dx:zero()
    for i = batch.dec_len_max, 1, -1 do
       local s = decoder.s[i-1]
       local derr = g_transfer_data(torch.ones(1))
@@ -21,12 +20,13 @@ local function bp_decoder(x, y, batch)
       cutorch.synchronize()
    end
 
-   decoder.norm = dx:norm()
-   if dx:norm() > opts.max_grad_norm then
-      local shrink_factor = opts.max_grad_norm/dx:norm()
-      dx:mul(shrink_factor)
+   decoder.norm = decoder.dx:norm()
+   if decoder.dx:norm() > opts.max_grad_norm then
+      local shrink_factor = opts.max_grad_norm/decoder.dx:norm()
+      decoder.dx:mul(shrink_factor)
    end
-   x:add(dx:mul(-opts.lr))
+   
+   decoder.x:add(decoder.dx:mul(-opts.lr))
 end
 
 local function bp_mlp()
@@ -71,30 +71,7 @@ local function bp_mlp()
 end
 
 local function bp_encoder(x, y, batch)
-   local x, dx = encoder.net[1]:getParameters()
-   dx:zero()
-
-   for i = batch.enc_len_max, 1, -1 do
-      local s = encoder.s[i-1]
-      local derr = g_transfer_data(torch.ones(1))
-      local input = {x[i], y[i], s}
-      local output = {derr, encoder.ds}
-      local tmp = encoder.net[i]:backward(input, output)[3]
-      g_replace_table(encoder.ds, tmp)
-      cutorch.synchronize()
-   end
-
-   encoder.norm = dx:norm()
-
-   if dx:norm() > opts.max_grad_norm then
-      local shrink_factor = opts.max_grad_norm/dx:norm()
-      dx:mul(shrink_factor)
-   end
-
-   x:add(dx:mul(-opts.lr))
-end
-
-local function transfer_s(batch)
+   encoder.dx:zero()
    for i = batch.enc_len_max, 1, -1 do
       for k = 1, batch.size do
          if batch.enc_line_length[k] == i then
@@ -112,13 +89,29 @@ local function transfer_s(batch)
             encoder.ds[d][k]:zero()
          end
       end
+
+      local s = encoder.s[i-1]
+      local derr = g_transfer_data(torch.ones(1))
+      local input = {x[i], y[i], s}
+      local output = {derr, encoder.ds}
+      local tmp = encoder.net[i]:backward(input, output)[3]
+      g_replace_table(encoder.ds, tmp)
+      cutorch.synchronize()
    end
+
+   encoder.norm = encoder.dx:norm()
+
+   if encoder.dx:norm() > opts.max_grad_norm then
+      local shrink_factor = opts.max_grad_norm/encoder.dx:norm()
+      encoder.dx:mul(shrink_factor)
+   end
+
+   encoder.x:add(encoder.dx:mul(-opts.lr))
 end
 
 function bp(enc_x,enc_y,dec_x,dec_y,batch,mode)
    if mode == 'test' then return end
    bp_decoder(dec_x, dec_y, batch)
    if opts.sgvb then bp_mlp() end
-   transfer_s(batch)
    bp_encoder(enc_x, enc_y, batch)
 end

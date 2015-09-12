@@ -27,6 +27,13 @@ function log(epoch, iter, mode, stats, batch)
    st.enc_err, st.dec_err = getError(batch)
    st.avg_dec_err = ((st.avg_dec_err * (iter-1)) + st.dec_err)/iter
 
+   local mu_norm = 0
+   local lsigs_norm = 0
+   if opts.sgvb then
+      mu_norm = mlp.mu.norm
+      lsigs_norm = mlp.lsigs.norm
+   end
+
    print(mode .. ': epoch=' .. string.format('%02d',epoch + opts.start) ..  
          ', iter=' .. string.format('%03d',iter) ..
          -- ', enc_err=' .. string.format('%.2f',st.enc_err) ..
@@ -35,8 +42,8 @@ function log(epoch, iter, mode, stats, batch)
          ', avg_dec_err=' .. string.format('%.2f',st.avg_dec_err) ..
          ', encdxNorm=' .. string.format('%.4f',encoder.norm) ..
          ', decdxNorm=' .. string.format('%.4f',decoder.norm) .. 
-         ', mudxNorm=' .. string.format('%.4f',mlp.mu.norm) .. 
-         ', lsigsdxNorm=' .. string.format('%.4f',mlp.lsigs.norm) .. 
+         ', mudxNorm=' .. string.format('%.4f',mu_norm) .. 
+         ', lsigsdxNorm=' .. string.format('%.4f',lsigs_norm) .. 
          ', lr=' ..  string.format('%.3f',opts.lr))
 
    st.avg_dec_err_epoch[epoch] = st.avg_dec_err

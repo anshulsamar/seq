@@ -89,7 +89,7 @@ local function fp_mlp(batch)
    end
 end
 
-local function transfer_s()
+local function transfer_s(batch)
    for k = 1, batch.size do
       for d = 1, 2 * opts.layers do
          decoder.s[0][d][k] = encoder.s[batch.enc_line_length[k]][d][k]
@@ -99,7 +99,7 @@ end
 
 function fp(enc_x, enc_y, dec_x, dec_y, batch, mode)
    fp_encoder(enc_x, enc_y, batch, mode)
-   if opts.sgvb then fp_mlp(batch) else transfer_s() end
+   if opts.sgvb then fp_mlp(batch) else transfer_s(batch) end
    fp_decoder(dec_x, dec_y, batch, mode)
 end
 

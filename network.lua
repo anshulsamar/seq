@@ -75,6 +75,7 @@ function setup_encoder()
    local net = create_network(EncCriterion,enc_data.lookup,
                             enc_data.lookup_size,enc_data.vocab_size,
                             opts.enc_in_size, opts.enc_rnn_size)
+   encoder.x, encoder.dx = net:getParameters()
    encoder.net = g_cloneManyTimes(net, enc_data.len_max)
    encoder.s = {}
    encoder.ds = {}
@@ -102,6 +103,7 @@ function setup_decoder()
    local net = create_network(DecCriterion,dec_data.lookup,
                             dec_data.lookup_size,dec_data.vocab_size,
                             opts.dec_in_size, opts.dec_rnn_size)
+   decoder.x, decoder.dx = net:getParameters()
    decoder.net = g_cloneManyTimes(net, dec_data.len_max)
    decoder.s = {}
    decoder.ds = {}
