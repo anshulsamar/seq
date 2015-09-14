@@ -81,10 +81,10 @@ function M.parse(data_file,opts)
       index['<unk>'] = vocab_size
    end
 
-   if index['<eom>'] == nil then
+   if index['<eos>'] == nil then
       vocab_size = vocab_size + 1
-      table.insert(rev_index, '<eom>')
-      index['<eom>'] = vocab_size
+      table.insert(rev_index, '<eos>')
+      index['<eos>'] = vocab_size
    end
 
    print("Total Lines " .. total_lines)
@@ -168,7 +168,6 @@ function M.get(opts)
    enc_d.vocab_size = 0
    enc_d.len_max = 0
    enc_d.total_lines = 0
-   enc_d.high_freq = 0
    if paths.filep(enc_d.train_file .. '.shuf') then 
       os.execute("rm " .. enc_d.train_file .. '.shuf')
    end
@@ -190,7 +189,6 @@ function M.get(opts)
    dec_d.vocab_size = 0
    dec_d.len_max = 0
    dec_d.total_lines = 0
-   dec_d.high_freq = 0
    if paths.filep(dec_d.train_file .. '.shuf') then 
       os.execute("rm " .. dec_d.train_file .. '.shuf')
    end

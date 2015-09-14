@@ -56,8 +56,8 @@ local function get_opts()
    cmd:option('-lr',0.7)
    cmd:option('-start',0)
    cmd:option('-max_epoch',25)
-   cmd:option('-test',true)
-   cmd:option('-train',true)
+   cmd:option('-test',false)
+   cmd:option('-train',false)
    cmd:option('-sweep',false)
    cmd:option('-gpu',1)
    cmd:option('-stats',false)
@@ -120,7 +120,9 @@ function run()
    print("Loading Data")
    enc_data, dec_data = data.get(opts)
    if opts.share then
-      dec_data = enc_data
+      dec_data.index = enc_data.index
+      dec_data.rev_index = enc_data.rev_index
+      dec_data.vocab_size = enc_data.vocab_size
    end
 
    -- Network

@@ -12,7 +12,7 @@ if len(sys.argv) == 1:
     exit()
 
 data_dir = '/deep/group/speech/asamar/nlp/data/penn/pennSource/'
-save_dir = '/deep/group/speech/asamar/nlp/data/penn/' + sys.argv[1] + '/'
+save_dir = sys.argv[1] + '/'
 
 if not os.path.exists(save_dir):
     print('Making directory ' + save_dir)
@@ -77,7 +77,7 @@ for a in [['ptb.train.txt','enc_train.txt','dec_train.txt'],['ptb.test.txt','enc
                         dec_to.write(' '.join(part[j]))
                         dec_to.write(' <eos>\n')
             else:
-                enc_to.write(line + ' <eos>\n')
+                enc_to.write(line + '\n')
                 dec_to.write(line + ' <eos>\n')
         
 
