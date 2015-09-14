@@ -39,21 +39,21 @@ end
 function load(enc_x, enc_y, enc_line, dec_x, dec_y, dec_line, batch)
    for i=1,#enc_line do
       if enc_line[i] ~= nil then
-         enc_num_word, last_word = loadMat(enc_line[i],
+         enc_line[i] = string.gsub(enc_line[i],'<eom>','')
+         batch.enc_line_length[i], last_word = loadMat(enc_line[i],
                                            enc_data.index,i,
                                            enc_x,enc_y,false)
-         dec_x[1][i] = enc_data.index[last_word]
-         dec_num_word, _ = loadMat(dec_line[i],
+         dec_line[i] = dec_line[i] .. ' <eos>'
+         dec_x[1][i] = dec_data.index['<eos>']
+         batch.dec_line_length[i], _ = loadMat(dec_line[i],
                                    dec_data.index,i,
                                    dec_x,dec_y,true)
-         if enc_num_word > batch.enc_len_max then
+         if batch.enc_line_length[i] > batch.enc_len_max then
             batch.enc_len_max = enc_num_word
          end
-         if dec_num_word > batch.dec_len_max then
+         if batch.dec_line_length[i] > batch.dec_len_max then
             batch.dec_len_max = dec_num_word
          end
-         batch.dec_line_length[i] = dec_num_word
-         batch.enc_line_length[i] = enc_num_word
       end
    end
 end

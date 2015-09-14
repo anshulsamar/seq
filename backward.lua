@@ -21,50 +21,48 @@ local function bp_decoder(x, y, batch)
    end
 
    decoder.norm = decoder.dx:norm()
-   if decoder.dx:norm() > opts.max_grad_norm then
-      local shrink_factor = opts.max_grad_norm/decoder.dx:norm()
+
+   if decoder.dx:norm() > opts.max_grad_norm_dec then
+      local shrink_factor = opts.max_grad_norm_dec/decoder.dx:norm()
       decoder.dx:mul(shrink_factor)
    end
    
    decoder.x:add(decoder.dx:mul(-opts.lr))
-   print('decoder dx norm ' .. decoder.dx:norm())
 end
 
 local function bp_mlp()
    for d = 1, 2 * opts.layers do
       local muNLL = torch.ones(opts.batch_size,opts.dec_rnn_size):cuda()
-      --local muNLL = torch.cmul(decoder.ds[d]]),
-      --                          torch.exp(mlp.lsigs.s[d] * 1/2)) * 1/2
       muNLL = torch.cmul(decoder.ds[d], muNLL)
-      local muKL = mlp.mu.s[d] * -2
-      --local muKL = torch.exp(mlp.mu.s[d])*(-1)
-      if d ==1 then 
-         print(mlp.mu.s[d])
-         print('muKL term ' .. muKL:norm()) 
-      end
+      local muKL = (mlp.mu.s[d] * -2) * (1/2)
       local lsigsNLL = torch.cmul(torch.cmul(decoder.ds[d],mlp.eps[d]),
                                 torch.exp(mlp.lsigs.s[d] * 1/2)) * 1/2
-      local p1 = torch.exp(mlp.lsigs.s[d])*(-1) 
-      local p2 = torch.ones(opts.batch_size,opts.dec_rnn_size):cuda()
+      local p1 = torch.exp(mlp.lsigs.s[d])*(-1) * (1/2) 
+      local p2 = torch.ones(opts.batch_size,opts.dec_rnn_size):cuda() * (1/2)
       local lsigsKL = p1 + p2
-      mlp.mu.ds[d] = mlp.mu.net[d]:backward(input, muNLL - muKL)
-      mlp.lsigs.ds[d] = mlp.lsigs.net[d]:backward(input, lsigsNLL - lsigsKL)
+      local input = encoder.out[d]
+      if opts.KL then
+         mlp.mu.ds[d] = mlp.mu.net[d]:backward(input, muNLL - muKL)
+         mlp.lsigs.ds[d] = mlp.lsigs.net[d]:backward(input, lsigsNLL - muKL)
+      else
+         mlp.mu.ds[d] = mlp.mu.net[d]:backward(input, muNLL)
+         mlp.lsigs.ds[d] = mlp.lsigs.net[d]:backward(input, lsigsNLL)
+      end
    end
 
-   for d = 1, 2*opts.layers do
+   for d = 1, 2 * opts.layers do
       local x, dx = mlp.mu.net[d]:getParameters()
       mlp.mu.norm = mlp.mu.norm + dx:norm()
-      if d ==1 then print('mu dx ' .. dx:norm()) end
-      if dx:norm() > opts.max_grad_norm then
-         local shrink_factor = opts.max_grad_norm/dx:norm()
+      if dx:norm() > opts.max_grad_norm_mlp then
+         local shrink_factor = opts.max_grad_norm_mlp/dx:norm()
          dx:mul(shrink_factor)
       end
       x:add(dx:mul(-opts.lr))
 
       local x, dx = mlp.lsigs.net[d]:getParameters()
       mlp.lsigs.norm = mlp.lsigs.norm + dx:norm()
-      if dx:norm() > opts.max_grad_norm then
-         local shrink_factor = opts.max_grad_norm/dx:norm()
+      if dx:norm() > opts.max_grad_norm_mlp then
+         local shrink_factor = opts.max_grad_norm_mlp/dx:norm()
          dx:mul(shrink_factor)
       end
       x:add(dx:mul(-opts.lr))
@@ -106,8 +104,8 @@ local function bp_encoder(x, y, batch)
 
    encoder.norm = encoder.dx:norm()
 
-   if encoder.dx:norm() > opts.max_grad_norm then
-      local shrink_factor = opts.max_grad_norm/encoder.dx:norm()
+   if encoder.dx:norm() > opts.max_grad_norm_enc then
+      local shrink_factor = opts.max_grad_norm_enc/encoder.dx:norm()
       encoder.dx:mul(shrink_factor)
    end
 
@@ -115,7 +113,7 @@ local function bp_encoder(x, y, batch)
 end
 
 function bp(enc_x,enc_y,dec_x,dec_y,batch,mode)
-   if mode == 'test' then return end
+   if mode == 'test' or mode == 'sweep' then return end
    bp_decoder(dec_x, dec_y, batch)
    if opts.sgvb then bp_mlp() end
    bp_encoder(enc_x, enc_y, batch)

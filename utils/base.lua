@@ -54,8 +54,8 @@ end
 
 function g_plot_err(model_file)
    if stats == nil then
-      local oldModel = torch.load(modelFile)
-      stats = oldModel[4]
+      local oldModel = torch.load(model_file)
+      stats = oldModel[6]
    end
    print('Train Avg Dec Err')
    print(stats.train.avg_dec_err_epoch)
@@ -129,6 +129,7 @@ function g_reset_decoder()
    for d = 1, 2 * opts.layers do
       decoder.ds[d]:zero()
    end
+   decoder.out = {}
 end
 
 function g_reset_mlp()

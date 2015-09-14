@@ -81,6 +81,12 @@ function M.parse(data_file,opts)
       index['<unk>'] = vocab_size
    end
 
+   if index['<eom>'] == nil then
+      vocab_size = vocab_size + 1
+      table.insert(rev_index, '<eom>')
+      index['<eom>'] = vocab_size
+   end
+
    print("Total Lines " .. total_lines)
    print("Vocab Size " .. vocab_size)
    print("Max Sequence Length " .. len_max)
@@ -150,7 +156,6 @@ function M.get(opts)
 
    local enc_d = {}
    enc_d.train_file =  opts.enc_train_file
-   enc_d.test_file = opts.enc_test_file
    enc_d.glove_file = opts.glove_file
    enc_d.saved_glove_file = opts.run_dir .. '/gloveEnc.th7'
    enc_d.saved_vocab_file = opts.run_dir .. '/vocabEnc.th7'
@@ -173,7 +178,6 @@ function M.get(opts)
 
    local dec_d = {}
    dec_d.train_file =  opts.dec_train_file
-   dec_d.test_file = opts.dec_test_file
    dec_d.glove_file = opts.glove_file
    dec_d.saved_glove_file = opts.run_dir .. '/gloveDec.th7'
    dec_d.saved_vocab_file = opts.run_dir .. '/vocabDec.th7'

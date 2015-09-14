@@ -14,6 +14,8 @@ require 'math'
 require 'utils/base'
 require 'utils/process'
 require 'utils/load'
+require 'EncCriterion'
+require 'DecCriterion'
 require 'data'
 require 'forward'
 require 'backward'
@@ -35,36 +37,42 @@ local function get_opts()
 
    -- Network
    torch.manualSeed(1)
-   cmd:option('-layers',1)
-   cmd:option('-enc_in_size',1)
-   cmd:option('-enc_rnn_size',2)
-   cmd:option('-dec_in_size',1)
-   cmd:option('-dec_rnn_size',2)
+   cmd:option('-layers',2)
+   cmd:option('-enc_in_size',200)
+   cmd:option('-enc_rnn_size',200)
+   cmd:option('-dec_in_size',200)
+   cmd:option('-dec_rnn_size',200)
    cmd:option('-load_model',false)
 
    -- Training
    cmd:option('-sgvb',false)
-   cmd:option('-max_grad_norm',5)
+   cmd:option('-max_grad_norm_enc',5)
+   cmd:option('-max_grad_norm_dec',5)
+   cmd:option('-max_grad_norm_mlp',5)
    cmd:option('-anneal',true)
-   cmd:option('-anneal_after',15)
+   cmd:option('-anneal_after',20)
    cmd:option('-decay',2)
    cmd:option('-weight_init',.1)
    cmd:option('-lr',0.7)
    cmd:option('-start',0)
-   cmd:option('-max_epoch',20)
+   cmd:option('-max_epoch',25)
    cmd:option('-test',true)
    cmd:option('-train',true)
+   cmd:option('-sweep',false)
    cmd:option('-gpu',1)
    cmd:option('-stats',false)
+   cmd:option('-KL',false)
 
    -- Data
    cmd:option('-share',true) -- share data and lookup table b/w enc/dec
-   cmd:option('-batch_size',10)
+   cmd:option('-batch_size',512)
    cmd:option('-data_dir','/deep/group/speech/asamar/nlp/data/numbers/')
    cmd:option('-enc_train_file','enc_train.txt')
    cmd:option('-dec_train_file','dec_train.txt')
    cmd:option('-enc_test_file','enc_test.txt')
    cmd:option('-dec_test_file','dec_test.txt')
+   cmd:option('-enc_sweep_file','enc_sweep.txt')
+   cmd:option('-dec_sweep_file','dec_sweep.txt')
    cmd:option('-glove',false)
    cmd:option('-glove_file','/deep/group/speech/asamar/nlp/' ..
                  'glove/pretrained/glove.840B.300d.txt')
@@ -77,7 +85,25 @@ local function get_opts()
    opts.dec_train_file = opts.data_dir .. opts.dec_train_file
    opts.enc_test_file = opts.data_dir .. opts.enc_test_file
    opts.dec_test_file = opts.data_dir .. opts.dec_test_file
+   opts.enc_sweep_file = opts.data_dir .. opts.enc_sweep_file
+   opts.dec_sweep_file = opts.data_dir .. opts.dec_sweep_file
    return opts
+end
+
+local function load_model()
+   filen = opts.run_dir .. '/model.th7'
+   if (paths.filep(filen)) then
+      print("Loading previous parameters")
+      local oldModel = torch.load(opts.run_dir .. '/model.th7')
+      encoder = oldModel[1]
+      decoder = oldModel[2]
+      mlp = oldModel[3]
+      opts.start = oldModel[4]
+      opts.lr = oldModel[5]
+      stats = oldModel[6]
+   else
+      print('No model to load, training from scratch')
+   end
 end
 
 function run()
@@ -111,18 +137,24 @@ function run()
    local stats = {}
    stats.train = {avg_dec_err_epoch = {}}
    stats.test = {avg_dec_err_epoch = {}}
+
+   -- Loading Model
+   if opts.load_model then
+      print('Loading Model')
+      load_model()
+   end
    
    -- Training
    g_print("Training\n----------", 'red')
    local modes = {}
    if opts.train then table.insert(modes, 'train') end
    if opts.test then table.insert(modes, 'test') end
+   if opts.sweep then table.insert(modes, 'sweep') end
 
    for epoch=1,(opts.max_epoch - opts.start) do
       for _,mode in ipairs(modes) do
          -- Setup
          local iter = 0
-
          g_reset_stats(stats)
 
          -- Anneal
@@ -134,17 +166,19 @@ function run()
          local enc_f, dec_f
 
          if mode == 'test' then
-            enc_f = io.open(enc_data.test_file,'r')
-            dec_f = io.open(dec_data.test_file,'r')
+            enc_f = io.open(opts.enc_test_file,'r')
+            dec_f = io.open(opts.dec_test_file,'r')
+         elseif mode == 'sweep' then
+            enc_f = io.open(opts.enc_sweep_file,'r')
+            dec_f = io.open(opts.dec_sweep_file,'r')
          else
-            enc_f = io.open(enc_data.train_file,'r')
-            dec_f = io.open(dec_data.train_file,'r')
+            enc_f = io.open(opts.enc_train_file,'r')
+            dec_f = io.open(opts.dec_train_file,'r')
          end
-         
+
          while true do
             -- Read in Data
             iter = iter + 1
-            decoder.out = {}
             local enc_line = {}
             local dec_line = {}
             while #enc_line < opts.batch_size do
@@ -154,18 +188,15 @@ function run()
                table.insert(dec_line,tmp)
                if (tmp == nil) then break end
             end
-
             if #enc_line == 0 then break end
 
-            -- Initialize Matrices and Batch Struct
+            -- Load x, y, batch
             local batch = g_initialize_batch(#enc_line)
             local enc_x, enc_y = g_initialize_mat(enc_data.len_max,
                                     enc_data.default_index, opts, batch)
             local dec_x, dec_y = g_initialize_mat(dec_data.len_max,
                                     dec_data.default_index, opts, batch)      
             collectgarbage()
-
-            -- Load Matrices and Line Lengths
             load(enc_x, enc_y, enc_line, dec_x, dec_y, dec_line, batch)
 
             -- Forward and Backward Prop
@@ -177,20 +208,23 @@ function run()
 
             -- Log and Decode
             log(epoch,iter,mode,stats,batch)
-            decode(epoch,iter,batch,enc_line,dec_line,mode,opts)
-
-            if batch.size ~= opts.batch_size then
-               break
+            if mode == 'sweep' then
+               q_decode(enc_line,dec_line,batch)
+            else
+               decode(epoch,iter,batch,enc_line,dec_line,mode,opts)
             end
+
          end
 
          enc_f:close()
          dec_f:close()
 
          -- Save Model
-         
-         local save_struct = {{}, epoch + opts.start, opts.lr, stats}
-         torch.save(opts.run_dir .. '/model.th7', save_struct)
+         if mode == 'train' then
+            local save_struct = {encoder, decoder, mlp, epoch + opts.start, 
+                                 opts.lr, stats}
+            torch.save(opts.run_dir .. '/model.th7', save_struct)
+         end
                     
       end         
    end

@@ -76,3 +76,20 @@ function decode(epoch,iter,batch,enc_line,dec_line,mode,opts)
    end
    f:close()
 end
+
+function q_decode(enc_line,dec_line,batch)
+   local indexes = {}
+   for i=1,#decoder.out do
+      local y, ind = torch.max(decoder.out[i],2)
+      table.insert(indexes,ind)
+   end
+
+   for i=1,#dec_line do
+      local num_words = batch.dec_line_length[i]
+      local sentence = ''
+      for j=1,num_words do
+         sentence = sentence .. dec_data.rev_index[indexes[j][i][1]] .. ' '
+      end
+      print(enc_line[i] .. ' | ' .. sentence)
+   end
+end

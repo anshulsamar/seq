@@ -124,7 +124,7 @@ end
 function setup_mlp()
    for d = 1, 2 * opts.layers do
       local h1 = nn.Identity()()
-      local h2 = nn.Linear(opts.enc_rnn_size, opts.dec_rnn_size)(h1)
+      local h2 = nn.Tanh()(nn.Linear(opts.enc_rnn_size, opts.dec_rnn_size)(h1))
       local net = nn.gModule({h1}, {h2})
       net:getParameters():uniform(-opts.weight_init, opts.weight_init)
       mlp.mu.net[d] = g_transfer_data(net)
@@ -139,7 +139,7 @@ function setup_mlp()
 
    for d = 1, 2 * opts.layers do
       local h1 = nn.Identity()()
-      local h2 = nn.Linear(opts.enc_rnn_size, opts.dec_rnn_size)(h1)
+      local h2 = nn.Tanh()(nn.Linear(opts.enc_rnn_size, opts.dec_rnn_size)(h1))
       local net = nn.gModule({h1}, {h2})
       net:getParameters():uniform(-opts.weight_init, opts.weight_init)
       mlp.lsigs.net[d] = g_transfer_data(net)
