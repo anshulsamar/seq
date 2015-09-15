@@ -22,6 +22,10 @@ require 'backward'
 require 'network'
 
 -- Global Data Structures
+-- ----------------------
+-- s = state, ds = gradient wrt input
+-- lsigs = log sigma squared
+-- eps = epsilon
 
 encoder = {net = {}, s = {}, ds = {}, out = {}, err = {}, norm = 0, x, dx}
 decoder = {net = {}, s = {}, ds = {}, out = {}, err = {}, norm = 0, x, dx}
@@ -46,6 +50,14 @@ local function get_opts()
 
    -- Training
    cmd:option('-sgvb',false)
+   cmd:option('-test',false)
+   cmd:option('-train',false)
+   cmd:option('-sweep',false)
+   cmd:option('-stats',false)
+   cmd:option('-KL',false)
+   cmd:option('-share',true) -- use for autoencoding
+
+   -- Optimization
    cmd:option('-max_grad_norm_enc',5)
    cmd:option('-max_grad_norm_dec',5)
    cmd:option('-max_grad_norm_mlp',5)
@@ -56,15 +68,11 @@ local function get_opts()
    cmd:option('-lr',0.7)
    cmd:option('-start',0)
    cmd:option('-max_epoch',25)
-   cmd:option('-test',false)
-   cmd:option('-train',false)
-   cmd:option('-sweep',false)
+
+   -- System
    cmd:option('-gpu',1)
-   cmd:option('-stats',false)
-   cmd:option('-KL',false)
 
    -- Data
-   cmd:option('-share',true) -- share data and lookup table b/w enc/dec
    cmd:option('-batch_size',512)
    cmd:option('-data_dir','/deep/group/speech/asamar/nlp/data/numbers/')
    cmd:option('-enc_train_file','enc_train.txt')
@@ -76,7 +84,7 @@ local function get_opts()
    cmd:option('-glove',false)
    cmd:option('-glove_file','/deep/group/speech/asamar/nlp/' ..
                  'glove/pretrained/glove.840B.300d.txt')
-   cmd:option('-run_dir','/deep/group/speech/asamar/nlp/seq/numbers/')
+   cmd:option('-run_dir','/deep/group/speech/asamar/nlp/seq/pennSGVB/')
 
    -- Load Options, Make Paths
    local opts = cmd:parse(arg)
@@ -123,6 +131,9 @@ function run()
       dec_data.index = enc_data.index
       dec_data.rev_index = enc_data.rev_index
       dec_data.vocab_size = enc_data.vocab_size
+      dec_data.lookup = enc_data.lookup
+      dec_data.lookup_size = enc_data.lookup_size
+      dec_data.default_index = enc_data.default_index
    end
 
    -- Network
@@ -131,7 +142,6 @@ function run()
    setup_encoder()
    print("Setting up Decoder")
    setup_decoder()
-
    if opts.sgvb then setup_mlp() end
 
    -- Stats
@@ -211,7 +221,7 @@ function run()
             -- Log and Decode
             log(epoch,iter,mode,stats,batch)
             if mode == 'sweep' then
-               q_decode(enc_line,dec_line,batch)
+               q_decode(enc_line,dec_line,batch) --prints output
             else
                decode(epoch,iter,batch,enc_line,dec_line,mode,opts)
             end

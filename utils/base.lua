@@ -118,6 +118,8 @@ function g_reset_encoder()
       encoder.ds[d]:zero()
       encoder.out[d]:zero()
    end
+   encoder.norm = 0
+   encoder.dx:zero()
 end
 
 function g_reset_decoder()
@@ -130,6 +132,8 @@ function g_reset_decoder()
       decoder.ds[d]:zero()
    end
    decoder.out = {}
+   decoder.norm = 0
+   decoder.dx:zero()
 end
 
 function g_reset_mlp()

@@ -97,6 +97,7 @@ function setup_encoder()
       local out = torch.zeros(opts.batch_size,opts.enc_rnn_size)
       encoder.out[d] = g_transfer_data(out)
    end
+   encoder.max_grad_norm = opts.max_grad_norm_enc
 end
 
 function setup_decoder()
@@ -119,6 +120,7 @@ function setup_decoder()
       decoder.ds[d] = g_transfer_data(deltas)
    end
    decoder.err = g_transfer_data(torch.zeros(dec_data.len_max))
+   decoder.max_grad_norm = opts.max_grad_norm_dec
 end
 
 function setup_mlp()
@@ -151,4 +153,6 @@ function setup_mlp()
       local ds = torch.zeros(opts.batch_size,opts.dec_rnn_size)
       mlp.lsigs.ds[d] = g_transfer_data(ds)
    end
+
+   mlp.max_grad_norm = opts.max_grad_norm_mlp
 end

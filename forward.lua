@@ -2,46 +2,25 @@ require 'torch'
 require 'utils/base.lua'
 
 local function fp_encoder(x, y, batch, mode)
-   local ret
    for i = 1, batch.enc_len_max do
       local s = encoder.s[i - 1]
-      ret = encoder.net[i]:forward({x[i], y[i], s})
+      local ret = encoder.net[i]:forward({x[i], y[i], s})
       encoder.err[i] = ret[1]
       encoder.s[i] = ret[2]
    end
 end
 
 local function fp_decoder(x, y, batch, mode)
-   if mode == 'test' or mode == 'sweep' then
-      local x_init = torch.ones(opts.batch_size) * dec_data.default_index
-      x = {g_transfer_data(x_init)}
-   end
-
-   local ret
    for i = 1, batch.dec_len_max do
       local s = decoder.s[i - 1]
-      ret = decoder.net[i]:forward({x[i], y[i], s})
+      local ret = decoder.net[i]:forward({x[i], y[i], s})
+      -- during testime, feed output as input
       if mode == 'test' or mode == 'sweep' then
          local _, ind = torch.max(decoder.out[i],2)
-         table.insert(x,ind:select(2,1))
+         x[i + 1] = ind:select(2,1)
       end
-
       decoder.err[i] = ret[1]
       decoder.s[i] = ret[2]
-
-      for j = 1, batch.size do
-         if i > batch.dec_line_length[j]  then
-            for d = 1, 2 * opts.layers do
-               decoder.s[i][d][j]:zero()
-            end
-         end
-      end
-
-      for j = batch.size + 1, opts.batch_size do
-         for d = 1, 2 * opts.layers do
-            decoder.s[i][d][j]:zero()
-         end
-      end
    end
 end
 
@@ -68,16 +47,11 @@ local function fp_mlp(batch)
       local lsigs = mlp.lsigs.net[d]:forward(input)
       mlp.lsigs.s[d] = lsigs
       local sigma = torch.exp(lsigs * 1/2)
-      local z
       local z = mu + torch.cmul(sigma, mlp.eps[d])
       if mode == 'sweep' then
          for k = 1, batch.size do
             z[k] = mu + torch.cmul(sigma, -1 + (batch.size - k)*.02)
          end
-      end
-
-      for k = batch.size + 1, opts.batch_size do
-         z[k]:zero()
       end
       decoder.s[0][d] = z
    end

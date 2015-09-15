@@ -40,7 +40,7 @@ function log(epoch, iter, mode, stats, batch)
          -- ', avg_enc_err=' .. string.format('%.2f',st.avg_enc_err) ..
          ', dec_err=' .. string.format('%.2f',st.dec_err) .. 
          ', avg_dec_err=' .. string.format('%.2f',st.avg_dec_err) ..
-         ', encdxNorm=' .. string.format('%.2f',encoder.norm) ..
+         ', encdxNorm=' .. string.format('%.4f',encoder.norm) ..
          ', decdxNorm=' .. string.format('%.2f',decoder.norm) .. 
          ', mudxNorm=' .. string.format('%.2f',mu_norm) .. 
          ', lsigsdxNorm=' .. string.format('%.2f',lsigs_norm) .. 

@@ -37,7 +37,7 @@ local function load_mat(line, index, i, x, y, system)
    return num_word
 end
 
-function load(enc_x, enc_y, enc_line, dec_x, dec_y, dec_line, batch)
+function load(enc_x, enc_y, enc_line, dec_x, dec_y, dec_line, batch, mode)
    for i=1,#enc_line do
       if enc_line[i] ~= nil then
          batch.enc_line_length[i] = load_mat(enc_line[i],

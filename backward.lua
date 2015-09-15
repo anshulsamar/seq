@@ -8,8 +8,16 @@ require 'math'
 require 'utils/base'
 require 'data'
 
+local function gd(model)
+   if model.dx:norm() > model.max_grad_norm then
+      local shrink_factor = model.max_grad_norm/model.dx:norm()
+      model.dx:mul(shrink_factor)
+   end
+   model.x:add(model.dx:mul(-opts.lr))
+end
+
+
 local function bp_decoder(x, y, batch)
-   decoder.dx:zero()
    for i = batch.dec_len_max, 1, -1 do
       local s = decoder.s[i-1]
       local derr = g_transfer_data(torch.ones(1))
@@ -21,13 +29,7 @@ local function bp_decoder(x, y, batch)
    end
 
    decoder.norm = decoder.dx:norm()
-
-   if decoder.dx:norm() > opts.max_grad_norm_dec then
-      local shrink_factor = opts.max_grad_norm_dec/decoder.dx:norm()
-      decoder.dx:mul(shrink_factor)
-   end
-   
-   decoder.x:add(decoder.dx:mul(-opts.lr))
+   gd(decoder)
 end
 
 local function bp_mlp()
@@ -50,6 +52,7 @@ local function bp_mlp()
       end
    end
 
+   -- need to integrate into grad descent function above
    for d = 1, 2 * opts.layers do
       local x, dx = mlp.mu.net[d]:getParameters()
       mlp.mu.norm = mlp.mu.norm + dx:norm()
@@ -74,7 +77,6 @@ local function bp_mlp()
 end
 
 local function bp_encoder(x, y, batch)
-   encoder.dx:zero()
    for i = batch.enc_len_max, 1, -1 do
       for k = 1, batch.size do
          if batch.enc_line_length[k] == i then
@@ -103,13 +105,7 @@ local function bp_encoder(x, y, batch)
    end
 
    encoder.norm = encoder.dx:norm()
-
-   if encoder.dx:norm() > opts.max_grad_norm_enc then
-      local shrink_factor = opts.max_grad_norm_enc/encoder.dx:norm()
-      encoder.dx:mul(shrink_factor)
-   end
-
-   encoder.x:add(encoder.dx:mul(-opts.lr))
+   gd(encoder)
 end
 
 function bp(enc_x,enc_y,dec_x,dec_y,batch,mode)
