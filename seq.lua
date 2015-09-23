@@ -56,6 +56,7 @@ local function get_opts()
    cmd:option('-stats',false)
    cmd:option('-KL',false)
    cmd:option('-share',true) -- use for autoencoding
+   cmd:option('-reverse',true) --input reversal
 
    -- Optimization
    cmd:option('-max_grad_norm_enc',5)
@@ -74,6 +75,7 @@ local function get_opts()
 
    -- Data
    cmd:option('-batch_size',512)
+   cmd:option('-reverse',false) --input reversal
    cmd:option('-data_dir','/deep/group/speech/asamar/nlp/data/numbers/')
    cmd:option('-enc_train_file','enc_train.txt')
    cmd:option('-dec_train_file','dec_train.txt')

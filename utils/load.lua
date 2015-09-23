@@ -21,8 +21,11 @@ local function load_mat(line, index, i, x, y, system)
             y[num_word][i] = index[word]
             indexes[word] = {index[word],word}
          else
-            --x[num_word][i] = index[word]
-            x[len - num_word + 1][i] = index[word]
+            if opts.reverse then
+               x[len - num_word + 1][i] = index[word]
+            else
+               x[num_word][i] = index[word]
+            end
          end
          last_word = word
       end
