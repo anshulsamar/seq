@@ -42,6 +42,33 @@ def splitSentence(from_sent):
                 split_sent.append(word[start::])
     return split_sent
 
+# This version doesn't do anything about punctuation inside words
+# and only considers punctuation at the beginning or end of a word
+
+def splitSentenceFast(from_sent):
+    split_sent = []
+    start = 0
+    from_sent = from_sent.split()
+    for word in from_sent:
+        start = 0
+        if '\xe2\x80\x9c' in word:
+            word = word.replace('\xe2\x80\x9c','\"')
+        if '\xe2\x80\x9d' in word:
+            word = word.replace('\xe2\x80\x9d','\"')
+        if word in string.punctuation or word in hindi_punctuation:
+            split_sent.append(word)
+        start = 0
+        end = len(word)
+        if word[0] in string.punctuation:
+            split_sent.append(word[0])
+            start = 1
+        if word[-1] in string.punctuation:
+            split_sent.append(word[start:-1])
+            split_sent.append(word[-1])
+        else:
+            split_sent.append(word[start::])
+    return split_sent
+
 def addToVocab(vocab,sent):
     for i in range(0,len(sent)):
         if sent[i] in vocab:
@@ -100,24 +127,25 @@ num_lines = 0
 for line in data:
     orig_line = line.lower().strip()
     split_line = orig_line.split('\t')
-    print(split_line[3])
     eng_sent = splitSentence(split_line[3])
-    print(eng_sent)
     addToVocab(eng_vocab,eng_sent)
     hindi_sent = splitSentence(split_line[4])
     addToVocab(hindi_vocab,hindi_sent)
 data.close()
+
+print('Sorting Eng Vocab')
+eng_vocab = sorted(eng_vocab,key = lambda x: eng_vocab[x])
+eng_vocab.reverse()
+print('Sorting Hindi Vocab')
+hindi_vocab = sorted(hindi_vocab,key = lambda x: hindi_vocab[x])
+hindi_vocab.reverse()
 
 print('Parsing Train and Test Set')
 for a in [['ptb.train.txt','enc_train.txt','dec_train.txt'],['ptb.test.txt','enc_test.txt','dec_test.txt']]:
     data = open(save_dir + a[0],'r')
     enc_to = open(save_dir + a[1],'w')
     dec_to = open(save_dir + a[2],'w')
-    eng_vocab = sorted(eng_vocab,key = lambda x: eng_vocab[x])
-    eng_vocab.reverse()
-    hindi_vocab = sorted(hindi_vocab,key = lambda x: hindi_vocab[x])
-    hindi_vocab.reverse()
-
+    count = 0
     for line in data:
         orig_line = line.lower().strip()
         s = orig_line.split('\t')
@@ -125,6 +153,10 @@ for a in [['ptb.train.txt','enc_train.txt','dec_train.txt'],['ptb.test.txt','enc
         enc_to.write(removeOOV(eng_vocab,eng_sent).strip() + '\n')
         hindi_sent = splitSentence(s[4])
         dec_to.write(removeOOV(hindi_vocab,hindi_sent).strip() + ' <eos>\n')
+        count = count + 1
+        if (count % 1000 == 0):
+            print('Finished parsing ' + str(count))
+            sys.stdout.flush()
 
     data.close()
     enc_to.close()
