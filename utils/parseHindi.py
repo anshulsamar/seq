@@ -1,3 +1,5 @@
+# words like don't are split into don ' t
+
 from random import shuffle
 import random
 import math
@@ -16,6 +18,10 @@ def splitSentence(from_sent):
     from_sent = from_sent.split()
     for word in from_sent:
         start = 0
+        if '\xe2\x80\x9c' in word:
+            word = word.replace('\xe2\x80\x9c','\"')
+        if '\xe2\x80\x9d' in word:
+            word = word.replace('\xe2\x80\x9d','\"')
         if word in string.punctuation or word in hindi_punctuation:
             split_sent.append(word)
         else:
@@ -23,8 +29,15 @@ def splitSentence(from_sent):
                 if word[i] in string.punctuation or word[i] in hindi_punctuation:
                     if word[start:i] != '':
                         split_sent.append(word[start:i])
-                    split_sent.append(word[i])
-                    start = i + 1
+                        split_sent.append(word[i])
+                        start = i + 1
+                    #if word[i] == '\'' and i != 0 and i != (len(word) - 1) and word[i+1] not in string.punctuation:
+                    #    split_sent.append(word[i::])
+                    #    start = len(word)
+                    #    break
+                    else:
+                        split_sent.append(word[i])
+                        start = i + 1
             if word[start::] != '':
                 split_sent.append(word[start::])
     return split_sent
@@ -51,7 +64,7 @@ if len(sys.argv) == 1:
     print('python parseHindi.py nameOfSaveDir')
     exit()
 
-data_dir = '/deep/group/speech/asamar/nlp/data/hindi/hindiSource/'
+data_dir = '/deep/group/speech/asamar/nlp/data/hindi/source/'
 save_dir = sys.argv[1] + '/'
 
 if not os.path.exists(save_dir):
@@ -62,9 +75,6 @@ print('Loading Original Hindi Dataset')
 train_set_size = 273000
 data = open(data_dir + 'hindencorp05.plaintext','r')
 lines = data.readlines()
-
-print('Shuffling Lines')
-shuffle(lines)
 count = 0
 
 print('Creating Train and Test Source Sets')
@@ -88,13 +98,13 @@ hindi_vocab = {}
 data = open(save_dir + 'ptb.train.txt','r')
 num_lines = 0
 for line in data:
-    pdb.set_trace()
     orig_line = line.lower().strip()
-    s = orig_line.split('\t')
-    eng_sent = splitSentence(s[3])
+    split_line = orig_line.split('\t')
+    print(split_line[3])
+    eng_sent = splitSentence(split_line[3])
     print(eng_sent)
     addToVocab(eng_vocab,eng_sent)
-    hindi_sent = splitSentence(s[4])
+    hindi_sent = splitSentence(split_line[4])
     addToVocab(hindi_vocab,hindi_sent)
 data.close()
 
