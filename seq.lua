@@ -55,26 +55,27 @@ local function get_opts()
    cmd:option('-sweep',false)
    cmd:option('-stats',false)
    cmd:option('-KL',false)
-   cmd:option('-share',true) -- use for autoencoding
+   cmd:option('-share',false) -- use for autoencoding
    cmd:option('-reverse',true) --input reversal
+   cmd:option('-eos',true) --use eos at last dec output, first dec input
 
    -- Optimization
    cmd:option('-max_grad_norm_enc',5)
    cmd:option('-max_grad_norm_dec',5)
    cmd:option('-max_grad_norm_mlp',5)
    cmd:option('-anneal',true)
-   cmd:option('-anneal_after',20)
+   cmd:option('-anneal_after',25)
    cmd:option('-decay',2)
    cmd:option('-weight_init',.1)
-   cmd:option('-lr',0.7)
+   cmd:option('-lr',1)
    cmd:option('-start',0)
-   cmd:option('-max_epoch',25)
+   cmd:option('-max_epoch',30)
 
    -- System
    cmd:option('-gpu',1)
 
    -- Data
-   cmd:option('-batch_size',512)
+   cmd:option('-batch_size',256)
    cmd:option('-reverse',false) --input reversal
    cmd:option('-data_dir','/deep/group/speech/asamar/nlp/data/numbers/')
    cmd:option('-enc_train_file','enc_train.txt')
@@ -121,15 +122,16 @@ function run()
    g_print('Starting Experiment\n---------------','red')
    opts = get_opts()
    g_init_gpu(opts.gpu)
-   g_make_run_dir(opts)
+   g_make_run_dir()
    print(opts)
    print("Saving Options")
    torch.save(paths.concat(opts.run_dir,'opts.th7'),opts)
 
    -- Data
    print("Loading Data")
-   enc_data, dec_data = data.get(opts)
+   enc_data, dec_data = data.get()
    if opts.share then
+      print("Sharing Data for Autoencoding Setup")
       dec_data.index = enc_data.index
       dec_data.rev_index = enc_data.rev_index
       dec_data.vocab_size = enc_data.vocab_size
@@ -199,7 +201,7 @@ function run()
                local tmp = enc_f:read("*l")
                table.insert(enc_line,tmp)
                tmp = dec_f:read("*l")
-               table.insert(dec_line,tmp)
+               table.insert(dec_line,tmp .. ' <eos>')
                if (tmp == nil) then break end
             end
             if #enc_line == 0 then break end
@@ -207,9 +209,9 @@ function run()
             -- Load x, y, batch
             local batch = g_initialize_batch(#enc_line)
             local enc_x, enc_y = g_initialize_mat(enc_data.len_max,
-                                    enc_data.default_index, opts, batch)
+                                    enc_data.default_index, batch)
             local dec_x, dec_y = g_initialize_mat(dec_data.len_max,
-                                    dec_data.default_index, opts, batch)      
+                                    dec_data.default_index, batch)      
             collectgarbage()
             load(enc_x, enc_y, enc_line, dec_x, dec_y, dec_line, batch)
 

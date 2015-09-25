@@ -80,7 +80,7 @@ function g_initialize_batch(size)
    return batch
 end
 
-function g_initialize_mat(len_max, default_index, opts)
+function g_initialize_mat(len_max, default_index)
    local x = {}
    local y = {}
 
@@ -101,7 +101,7 @@ function g_initialize_eps()
    end
 end
 
-function g_make_run_dir(opts)
+function g_make_run_dir()
    if paths.dir(opts.run_dir) == nil then
       paths.mkdir(opts.run_dir)
       paths.mkdir(opts.decode_dir)

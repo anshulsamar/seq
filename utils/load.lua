@@ -46,7 +46,9 @@ function load(enc_x, enc_y, enc_line, dec_x, dec_y, dec_line, batch, mode)
          batch.enc_line_length[i] = load_mat(enc_line[i],
                                              enc_data.index,i,
                                              enc_x,enc_y,'encoder')
-         dec_x[1][i] = dec_data.index['<eos>']
+         if opts.eos then
+            dec_x[1][i] = dec_data.index['<eos>']
+         end
          batch.dec_line_length[i] = load_mat(dec_line[i],
                                              dec_data.index,i,
                                              dec_x,dec_y,'decoder')

@@ -40,7 +40,7 @@ function M.getGlove(path,index,size)
    return glove_vecs
 end
 
-function M.parse(data_file,opts)
+function M.parse(data_file,opts,system)
 
    local index = {}
    local word_count = {}
@@ -53,6 +53,9 @@ function M.parse(data_file,opts)
    while true do
       local line = data:read()
       if line == nil then break end
+      if system == 'decoder' and opts.eos then
+         line = line .. ' <eos>'
+      end
       local words = stringx.split(line:lower())
       local len = words:len()
       if (len > 0) then 
@@ -98,12 +101,12 @@ function M.parse(data_file,opts)
    return index, rev_index, word_count, vocab_size, len_max, total_lines
 end
 
-function M.load(d,opts)
+function M.load(d,opts,system)
 
    if paths.filep(d.saved_vocab_file) == false then
       d.index, d.rev_index, d.word_count, 
       d.vocab_size, d.len_max, d.total_lines = 
-         M.parse(d.train_file,opts)       
+         M.parse(d.train_file,opts,system)       
       print("Saving")
       torch.save(d.saved_vocab_file,
                  {d.index,d.rev_index,d.word_count, d.vocab_size,
@@ -150,7 +153,7 @@ function M.load(d,opts)
 
 end
 
-function M.get(opts)
+function M.get()
 
    print("\27[31mEncoder Data\n-------------")
 
@@ -171,7 +174,7 @@ function M.get(opts)
    if paths.filep(enc_d.train_file .. '.shuf') then 
       os.execute("rm " .. enc_d.train_file .. '.shuf')
    end
-   M.load(enc_d,opts)
+   M.load(enc_d,opts,'encoder')
 
    print("\27[31mDecoder Data\n-------------")
 
@@ -192,7 +195,7 @@ function M.get(opts)
    if paths.filep(dec_d.train_file .. '.shuf') then 
       os.execute("rm " .. dec_d.train_file .. '.shuf')
    end
-   M.load(dec_d,opts)
+   M.load(dec_d,opts,'decoder')
 
    -- print("\27[31mPost Processing\n---------------")  
    -- print("Shuffle Data")
