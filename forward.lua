@@ -1,3 +1,5 @@
+-- See original LSTM/LM code: github.com/wojzaremba/lstm
+
 require 'torch'
 require 'utils/base.lua'
 
