@@ -10,6 +10,7 @@ require 'utils/base'
 require 'data'
 
 -- wojrazemba lstm code https://github.com/wojzaremba/lstm/blob/master/main.lua
+
 local function lstm(x, prev_c, prev_h, in_size, rnn_size)
    -- Calculate four gates together (rows of x are individual examples)
    local i2h = nn.Linear(in_size, 4*rnn_size)(x)
